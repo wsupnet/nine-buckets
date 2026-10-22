@@ -1,0 +1,15 @@
+.venv/
+data/
+# Bare "__pycache__/" only matches the top level; ** catches nested ones.
+**/__pycache__/
+**/*.pyc
+.git/
+.gitignore
+.claude/
+.env
+.env.example
+README.md
+DEPLOY-NAS.md
+docker-compose*.yml
+docs/
+scripts/

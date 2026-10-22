@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+
+<h1>Net worth history</h1>
+<p class="sub">Snapshots record assets, liabilities and each bucket's value at a point in time.</p>
+
+<script type="application/json" id="nw-series">{{ series|tojson }}</script>
+
+<div class="card">
+  <div data-chart="networth" data-source="nw-series">
+    <div class="chart-head">
+      <h2 style="margin:0">Net worth over time</h2>
+      <div data-role="controls"></div>
+    </div>
+    <div data-role="canvas"></div>
+    <div data-role="caption"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head" style="margin-bottom:0">
+    <h2>Record a snapshot</h2>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <button type="button" data-toggle="snapnow" aria-expanded="false"
+              data-label-open="− From current values" data-label-closed="+ From current values">+ From current values</button>
+      <button type="button" class="ghost" data-toggle="snaphist" aria-expanded="false"
+              data-label-open="− Add past figures" data-label-closed="+ Add past figures">+ Add past figures</button>
+    </div>
+  </div>
+
+  <div id="snapnow" hidden style="margin-top:18px">
+    <p class="small muted" style="margin-top:0">Records what the app currently calculates —
+    total assets, liabilities and every bucket value.</p>
+    <form method="post" action="/snapshots" class="grid g3" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>Label <span class="muted">(optional)</span></label>
+        <input name="label" placeholder="e.g. 2026 year end">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Date <span class="muted">(defaults to now)</span></label>
+        <input type="date" name="taken_on">
+      </div>
+      <div><button type="submit">Record current values</button></div>
+    </form>
+  </div>
+
+  <div id="snaphist" hidden style="margin-top:18px">
+    <p class="small muted" style="margin-top:0">Type in a past year's totals straight from your
+    spreadsheet. These don't touch your current items, so your history can go back further than
+    the holdings you've entered. Bucket detail isn't recorded for hand-entered rows.</p>
+    <form method="post" action="/snapshots/manual">
+      <div class="grid g3">
+        <div class="field">
+          <label>Date</label>
+          <input type="date" name="taken_on" required>
+        </div>
+        <div class="field">
+          <label>Total assets (USD)</label>
+          <input name="assets" inputmode="decimal" placeholder="123456.78">
+        </div>
+        <div class="field">
+          <label>Total liabilities (USD)</label>
+          <input name="liabilities" inputmode="decimal" placeholder="23456.78">
+        </div>
+      </div>
+      <div class="field">
+        <label>Label <span class="muted">(optional)</span></label>
+        <input name="label" placeholder="e.g. 2023 year end">
+      </div>
+      <button type="submit">Add historical entry</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Snapshots</h2>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Date</th><th>Label</th><th class="num">Assets</th>
+      <th class="num">Liabilities</th><th class="num">Net worth</th>
+      <th class="num">Change</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for s in snaps %}
+      <tr>
+        <td>{{ s.date_only }}</td>
+        <td class="muted">{{ s.label or '—' }}</td>
+        <td class="num">{{ s.assets_usd|money }}</td>
+        <td class="num">{{ s.liabilities_usd|money }}</td>
+        <td class="num">{{ s.net_worth_usd|money }}</td>
+        <td class="num">
+          {% if not loop.last %}
+            {% set prev = snaps[loop.index0 + 1].net_worth_usd %}
+            {% set d = s.net_worth_usd - prev %}
+            <span class="{{ 'pos' if d >= 0 else 'neg' }}">
+              {{ ('+' if d >= 0 else '−') ~ (d|abs|money) }}
+            </span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td>
+          <div class="row-actions">
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                      aria-label="Actions for snapshot {{ s.date_only }}">⋯</button>
+              <div class="menu-list" hidden>
+                <button type="button" onclick="openPanel('snap-{{ s.id }}')">Edit</button>
+                <div class="menu-sep"></div>
+                <form method="post" action="/snapshots/{{ s.id }}/delete"
+                      onsubmit="return confirm('Delete the snapshot from {{ s.date_only }}?')">
+                  <button class="danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="muted">No snapshots yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% for s in snaps %}
+  <div class="edit-panel" id="snap-{{ s.id }}" hidden>
+    <div class="section-title" style="margin-top:0">
+      Editing snapshot — {{ s.date_only }}{% if s.label %} · {{ s.label }}{% endif %}
+    </div>
+    <form method="post" action="/snapshots/{{ s.id }}">
+      <div class="grid g3">
+        <div class="field">
+          <label>Date</label>
+          <input type="date" name="taken_on" value="{{ s.date_only }}" required>
+        </div>
+        <div class="field">
+          <label>Total assets (USD)</label>
+          <input name="assets" value="{{ '%.2f'|format(s.assets_usd or 0) }}" inputmode="decimal">
+        </div>
+        <div class="field">
+          <label>Total liabilities (USD)</label>
+          <input name="liabilities" value="{{ '%.2f'|format(s.liabilities_usd or 0) }}" inputmode="decimal">
+        </div>
+      </div>
+      <div class="field">
+        <label>Label</label>
+        <input name="label" value="{{ s.label or '' }}">
+      </div>
+      <div style="display:flex; gap:8px">
+        <button type="submit">Save changes</button>
+        <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">Net worth is recalculated as assets minus
+      liabilities. Editing totals does not change the bucket detail stored with this snapshot.</p>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Backups &amp; export</h2>
+    <div style="display:flex; gap:8px; flex-wrap:wrap">
+      <a class="btn ghost tiny" href="/backups/export.json">Download JSON export</a>
+      <button type="button" class="ghost tiny" data-toggle="uploadpanel" aria-expanded="false"
+              data-label-open="− Restore from file" data-label-closed="Restore from file">Restore from file</button>
+      <form method="post" action="/backups/run">
+        <button class="tiny" type="submit">Back up now</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="uploadpanel" hidden style="margin-bottom:16px">
+    <p class="small muted" style="margin-top:0">Upload a <code>.db</code> backup or a
+    <code>.json</code> export — including one from your Downloads folder. It's checked and
+    summarised first; nothing is overwritten until you confirm.</p>
+    <form method="post" action="/backups/upload" enctype="multipart/form-data"
+          class="grid g2" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>Backup file</label>
+        <input type="file" name="file" accept=".db,.json" required>
+      </div>
+      <div><button type="submit">Upload &amp; inspect</button></div>
+    </form>
+  </div>
+
+  {% if staged %}
+  <div class="edit-panel" id="staged" style="margin-bottom:16px">
+    <div class="section-title" style="margin-top:0">Uploaded file — review before restoring</div>
+    <div class="stats" style="margin-bottom:14px">
+      <div class="stat"><div class="label">Net worth in file</div>
+        <div class="value">{{ staged['net_worth']|money }}</div></div>
+      <div class="stat"><div class="label">Items</div>
+        <div class="value">{{ staged['items'] }}</div>
+        <div class="small muted">{{ staged['accounts'] }} accounts · {{ staged['lots'] }} lots</div></div>
+      <div class="stat"><div class="label">Snapshots</div>
+        <div class="value">{{ staged['snapshots'] }}</div>
+        <div class="small muted">{{ staged['transfers'] }} transfers</div></div>
+      <div class="stat"><div class="label">Assets / liabilities</div>
+        <div class="value" style="font-size:18px">{{ staged['assets']|money }}
+          <span class="neg">− {{ staged['liabilities']|money }}</span></div></div>
+    </div>
+    <p class="small muted" style="margin-top:0">Compare that against your current net worth of
+    <strong>{{ p.net_worth|money }}</strong>. Restoring replaces everything; your current data is
+    saved as a <code>pre-restore</code> backup first.</p>
+    <form method="post" action="/backups/restore">
+      <input type="hidden" name="name" value="{{ staged['name'] }}">
+      <div class="field" style="max-width:320px">
+        <label>Type <strong>RESTORE</strong> to confirm</label>
+        <input name="confirm" placeholder="RESTORE" autocomplete="off" required>
+      </div>
+      <button class="danger" type="submit">Restore this file</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <p class="small muted" style="margin-top:-6px">
+    Automatic backups run every {{ backup_hours }} hours into
+    <code>{{ backup_dir }}</code>, keeping {{ backup_retention }} days.
+    <strong>Download a copy off the NAS regularly</strong> — a backup stored next to the
+    database doesn't protect you if the whole folder is replaced.
+  </p>
+
+  {% if backups %}
+  <div class="table-scroll">
+    <table id="backups-table" data-paginate="10">
+      <thead><tr><th>Backup</th><th>Taken</th><th class="num">Items</th>
+      <th class="num">Size</th><th></th></tr></thead>
+      <tbody>
+      {% for b in backups %}
+        <tr>
+          <td>{{ b.name }}
+            {% if loop.first %}<span class="tag latest">Latest</span>{% endif %}
+          </td>
+          <td class="muted small">{{ b.modified[:16]|replace('T', ' ') }} UTC</td>
+          {# Size can't tell an empty backup from a full one — an empty database
+             still carries the whole schema. The item count can. #}
+          <td class="num {{ 'warnc' if b.item_count == 0 else 'muted' }}">
+            {% if b.item_count is none %}?
+            {% elif b.item_count == 0 %}<strong>0 — empty</strong>
+            {% else %}{{ b.item_count }}{% endif %}
+          </td>
+          <td class="num muted">{{ (b.bytes / 1024)|round(0)|int }} KB</td>
+          <td>
+            <div class="row-actions">
+              <div class="menu">
+                <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                        aria-label="Actions for {{ b.name }}">⋯</button>
+                <div class="menu-list" hidden>
+                  <a href="/backups/download/{{ b.name }}">Download</a>
+                  <button type="button"
+                          onclick="openPanel('restore-{{ loop.index }}')">Restore</button>
+                  <div class="menu-sep"></div>
+                  <form method="post" action="/backups/delete"
+                        onsubmit="return confirm('Delete {{ b.name }}?\n\nThis removes the backup file itself and cannot be undone. {% if backups|length == 1 %}It is your ONLY backup — you would have none left.{% else %}You would have {{ backups|length - 1 }} left.{% endif %}')">
+                    <input type="hidden" name="name" value="{{ b.name }}">
+                    <button class="danger" type="submit">Delete</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% for b in backups %}
+  <div class="edit-panel" id="restore-{{ loop.index }}" hidden>
+    <div class="section-title" style="margin-top:0">Restore {{ b.name }}</div>
+    <p class="small muted" style="margin-top:0">
+      This replaces everything currently in the app with the contents of that file.
+      Your current data is saved as a <code>pre-restore</code> backup first, so this is
+      reversible. The file is integrity-checked before anything is overwritten.
+    </p>
+    {% if b.item_count == 0 %}
+    <p class="toast err small" style="margin-top:0">
+      <strong>This backup is empty — it contains no items.</strong> Restoring it will leave
+      the app blank. It was almost certainly taken while the database was missing. Pick one
+      further down the list with a non-zero item count.
+    </p>
+    {% endif %}
+    <form method="post" action="/backups/restore">
+      <input type="hidden" name="name" value="{{ b.name }}">
+      <div class="field" style="max-width:320px">
+        <label>Type <strong>RESTORE</strong> to confirm</label>
+        <input name="confirm" placeholder="RESTORE" autocomplete="off" required>
+      </div>
+      <div style="display:flex; gap:8px">
+        <button class="danger" type="submit">Restore this backup</button>
+        <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted">No backups yet — press <em>Back up now</em>.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('chart.js') }}"></script>
+{% endblock %}

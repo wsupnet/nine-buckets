@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Allocation{% endblock %}
+{% block content %}
+
+<div class="card-head" style="margin-bottom:6px">
+  <div>
+    <h1>Allocation</h1>
+    <p class="sub" style="margin:4px 0 0">Nine Buckets — targets, drift, and where each
+    bucket's money actually sits. Percentages are of the allocation base
+    ({{ p.allocation_base|money }}).</p>
+    <p class="sub small" style="margin:2px 0 0">Inspired by Economic Ninja's bucket approach. See README.</p>
+  </div>
+  <div class="toggle" role="group" aria-label="Drill-down view">
+    <button type="button" class="on" data-view="list">List</button>
+    <button type="button" data-view="matrix">Matrix</button>
+    <button type="button" data-view="both">Both</button>
+  </div>
+</div>
+
+{% if p.target_total|round(1) != 100.0 %}
+<div class="note">Your targets sum to {{ p.target_total|round(1) }}%, not 100%.</div>
+{% endif %}
+
+{% if p.unbucketed_liabilities %}
+<div class="note">Liabilities sit outside the bucket system, so the allocation base
+({{ p.allocation_base|money }}) is higher than net worth ({{ p.net_worth|money }}) by the
+{{ p.unbucketed_liabilities|money }} you owe.</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head">
+    <h2>Buckets, targets &amp; drift</h2>
+    <span class="small muted">Targets save as you type</span>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>Bucket</th><th class="num">Value (USD)</th><th>Actual</th>
+        <th class="num">Actual %</th><th style="width:110px">Target %</th>
+        <th class="num">Drift</th><th style="width:150px">Under / over</th>
+        <th class="num">To rebalance</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for b in p.buckets %}
+      <tr>
+        <td>
+          <i class="swatch" style="background: {{ colors.get(b.key,'#888') }}; display:inline-block; margin-right:8px"></i>
+          <a class="plain" href="/buckets#bucket-{{ b.id }}">{{ b.name }}</a>
+          {% if b.excluded %}<br><span class="tag">excluded from %</span>{% endif %}
+        </td>
+        <td class="num" data-bind="bucket-value-{{ b.id }}">{{ b.value_usd|money }}</td>
+        <td>
+          {% if not b.excluded %}
+          <div class="bar"><i style="width: {{ [b.actual_pct, 100]|min }}%; background: {{ colors.get(b.key,'#888') }}"></i></div>
+          {% endif %}
+        </td>
+        <td class="num" data-bind="bucket-actual-{{ b.id }}">{{ '—' if b.excluded else b.actual_pct|pct }}</td>
+        <td>
+          {% if b.excluded %}<span class="muted">n/a</span>
+          {% else %}
+          <input class="inline-edit num" inputmode="decimal"
+                 data-inline-url="/buckets/{{ b.id }}/inline" data-inline-field="target_pct"
+                 data-inline-label="{{ b.name }} target" aria-label="{{ b.name }} target percent"
+                 value="{{ b.target_pct|round(1) }}">
+          {% endif %}
+        </td>
+        <td class="num {{ 'warnc' if not b.excluded and b.drift_pct|abs > 3 }}"
+            data-bind="bucket-drift-{{ b.id }}">
+          {{ '—' if b.excluded else (('+' if b.drift_pct > 0 else '') ~ b.drift_pct|round(1) ~ '%') }}
+        </td>
+        <td>
+          {% if not b.excluded %}
+          {% set w = [b.drift_pct|abs * 4, 50]|min %}
+          <div class="drift-track">
+            <i class="{{ 'over' if b.drift_pct > 0 else 'under' }}" style="width: {{ w }}%"></i>
+          </div>
+          {% endif %}
+        </td>
+        <td class="num {{ 'muted' if b.excluded else ('pos' if b.drift_usd > 0 else 'neg') }}"
+            data-bind="bucket-rebalance-{{ b.id }}" {% if not b.excluded %}data-signed{% endif %}>
+          {% if b.excluded %}—
+          {% else %}{{ ('buy ' if b.drift_usd > 0 else 'sell ') ~ (b.drift_usd|abs|money) }}{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="small muted" style="margin-bottom:0">Targets save as you edit them.
+  Currently summing to <span data-bind="target-total">{{ p.target_total|round(1) }}%</span>.</p>
+</div>
+
+{% if liabilities %}
+<div class="card">
+  <h2>Liabilities</h2>
+  <p class="small muted" style="margin-top:-8px">Outside the bucket system by design — these
+  reduce net worth only. A mortgage belongs on its property, not here.</p>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Liability</th><th>Account</th><th class="num">Owed (USD)</th></tr></thead>
+    <tbody>
+    {% for i in liabilities %}
+      <tr>
+        <td>{{ i.name }}</td>
+        <td class="muted small">{{ i.account_name or '—' }}</td>
+        <td class="num neg">{{ i.value_usd|money }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr style="border-top:2px solid var(--line)">
+      <th colspan="2">Total</th>
+      <th class="num neg">{{ p.liabilities|money }}</th>
+    </tr></tfoot>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{# ---------------- Matrix ---------------- #}
+<section data-panel="matrix" hidden>
+<div class="card">
+  <h2>Bucket × account</h2>
+  <p class="small muted" style="margin-top:-8px">Cells are assets only — the transpose of the
+  same grid on the Accounts page.</p>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Bucket</th>
+          {% for a in bv.matrix_accounts %}
+            <th class="num" style="white-space:nowrap">{{ a.name }}</th>
+          {% endfor %}
+          {% if bv.has_no_account %}<th class="num">No account</th>{% endif %}
+          <th class="num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in bv.matrix_rows %}
+        <tr>
+          <td style="white-space:nowrap">
+            <i class="swatch" style="background: {{ colors.get(r.key,'#8d99a8') }}; display:inline-block; margin-right:6px"></i>{{ r.name }}
+          </td>
+          {% for a in bv.matrix_accounts %}
+            <td class="num {{ 'muted' if not r.cells[a.id] }}">
+              {{ r.cells[a.id]|money if r.cells[a.id] else '·' }}
+            </td>
+          {% endfor %}
+          {% if bv.has_no_account %}
+            <td class="num {{ 'muted' if not r.cells['none'] }}">
+              {{ r.cells['none']|money if r.cells['none'] else '·' }}
+            </td>
+          {% endif %}
+          <td class="num">{{ r.assets_total|money }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--line)">
+          <th>Total</th>
+          {% for a in bv.matrix_accounts %}
+            <th class="num">{{ bv.col_totals[a.id]|money }}</th>
+          {% endfor %}
+          {% if bv.has_no_account %}<th class="num">{{ bv.col_totals['none']|money }}</th>{% endif %}
+          <th class="num">{{ bv.grand_assets|money }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+</section>
+
+{# ---------------- List ---------------- #}
+<section data-panel="list">
+{% for g in bv.groups %}
+<div class="card" id="bucket-{{ g.id }}">
+  <div class="card-head">
+    <h2>
+      <i class="swatch" style="background: {{ colors.get(g.key,'#8d99a8') }}; display:inline-block; margin-right:8px"></i>
+      {{ g.name }}
+      {% if g.account_count > 1 %}<span class="tag">{{ g.account_count }} accounts</span>{% endif %}
+      {% if g.excluded %}<span class="tag">excluded from %</span>{% endif %}
+    </h2>
+    <div class="small muted">
+      {{ g.assets_total|money }}
+      {% if not g.excluded and g.actual_pct is not none %}
+        · {{ g.actual_pct|pct }} of base
+        (target {{ g.target_pct|pct }},
+        <span class="{{ 'warnc' if g.drift_pct|abs > 3 }}">{{ '+' if g.drift_pct > 0 }}{{ g.drift_pct|round(1) }}%</span>)
+      {% endif %}
+    </div>
+  </div>
+
+  {% if g.splits %}
+  <div class="stack" style="height:10px; margin-bottom:10px">
+    {% for s in g.splits %}
+      <i style="width: {{ s.pct }}%; background: {{ colors.get(g.key, '#8d99a8') }}; opacity: {{ 1 - (loop.index0 * 0.16) if loop.index0 < 5 else 0.2 }}"
+         title="{{ s.account_name }} {{ s.pct|round(1) }}%"></i>
+    {% endfor %}
+  </div>
+  <div class="legend" style="margin:0 0 14px">
+    {% for s in g.splits %}
+      <span><i class="swatch" style="background: {{ colors.get(g.key,'#8d99a8') }}; opacity: {{ 1 - (loop.index0 * 0.16) if loop.index0 < 5 else 0.2 }}"></i>
+        {{ s.account_name }} {{ s.value_usd|money }} ({{ s.pct|round(0)|int }}%)</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Holding</th><th>Account</th><th>Type</th>
+      <th class="num">Value (USD)</th><th class="num">% of bucket</th></tr>
+    </thead>
+    <tbody>
+      {% for i in g.rows %}
+      {% set rid = 'grp-' ~ g.id ~ '-' ~ loop.index %}
+      <tr {% if i.is_group %}class="group-row" data-group="{{ rid }}" tabindex="0"
+          role="button" aria-expanded="false"
+          aria-label="{{ i.name }}, held in {{ i.parts|length }} accounts. Show the breakdown"{% endif %}>
+        <td>
+          {% if i.is_group %}<i class="caret" aria-hidden="true"></i>{% endif %}
+          {{ i.name }}{% if i.ticker %} <span class="tag">{{ i.ticker }}</span>{% endif %}
+        </td>
+        <td class="muted small">
+          {% if i.is_group %}Held in {{ i.parts|length }} accounts
+          {% else %}{{ i.account_name or '—' }}{% endif %}
+        </td>
+        <td class="muted small">{{ i.kind }}</td>
+        <td class="num">{{ i.value_usd|money }}</td>
+        <td class="num muted">{{ i.pct|round(1) }}%</td>
+      </tr>
+      {% if i.is_group %}
+        {% for part in i.parts %}
+        <tr class="group-part{{ ' group-part-end' if loop.last }}" data-part="{{ rid }}" hidden>
+          <td class="muted small indent">{{ part.account_name }}</td>
+          <td></td><td></td>
+          <td class="num muted small">{{ part.value_usd|money }}</td>
+          <td class="num muted small">{{ part.pct|round(1) }}%</td>
+        </tr>
+        {% endfor %}
+      {% endif %}
+      {% else %}
+      <tr><td colspan="5" class="muted">Nothing assigned to this bucket.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+</div>
+{% endfor %}
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const KEY = 'bucketsView';
+  const btns = document.querySelectorAll('.toggle button[data-view]');
+  function apply(view) {
+    document.querySelectorAll('[data-panel]').forEach(p => {
+      p.hidden = !(view === 'both' || p.dataset.panel === view);
+    });
+    btns.forEach(b => b.classList.toggle('on', b.dataset.view === view));
+    try { localStorage.setItem(KEY, view); } catch (e) {}
+  }
+  btns.forEach(b => b.addEventListener('click', () => apply(b.dataset.view)));
+  let saved = 'list';
+  try { saved = localStorage.getItem(KEY) || 'list'; } catch (e) {}
+  apply(saved);
+
+  // A holding held in several accounts is one row; clicking it reveals the split.
+  function toggleGroup(row) {
+    const open = row.getAttribute('aria-expanded') === 'true';
+    row.setAttribute('aria-expanded', open ? 'false' : 'true');
+    document.querySelectorAll('[data-part="' + row.dataset.group + '"]')
+      .forEach(p => { p.hidden = open; });
+  }
+  document.addEventListener('click', e => {
+    const row = e.target.closest('.group-row');
+    if (row) toggleGroup(row);
+  });
+  // Keyboard: the row is focusable, so it has to answer Enter and Space too.
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('.group-row');
+    if (!row) return;
+    e.preventDefault();
+    toggleGroup(row);
+  });
+
+  // Arriving from an Allocation link: make sure the target bucket is visible.
+  if (location.hash.startsWith('#bucket-')) {
+    if (document.querySelector('[data-panel=list]').hidden) apply('list');
+    const el = document.querySelector(location.hash);
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,385 @@
+:root {
+  --bg: #0f1216;
+  --panel: #171b21;
+  --panel-2: #1e242c;
+  --line: #2a323c;
+  --text: #e6eaef;
+  --muted: #8d99a8;
+  --accent: #4da3ff;
+  --pos: #3fbf7f;
+  --neg: #ef5f68;
+  --warn: #e5a53c;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f7fa; --panel: #fff; --panel-2: #f0f3f7; --line: #dde3ea;
+    --text: #16202b; --muted: #5f6f80; --accent: #1668c7;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Wider than the old 1120px, which left ~160px of dead gutter either side of a
+   laptop screen, but still short of the edge. Prose is capped separately below,
+   since a full-width paragraph is unreadable however wide the tables get. */
+.wrap { max-width: 1300px; margin: 0 auto; padding: 0 16px; }
+
+/* Without this, links fall back to the UA default dark blue — illegible on the dark theme. */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Bucket and holding names inside tables read as content, not navigation, so they
+   stay the same colour as the surrounding text. */
+a.plain { color: var(--text); text-decoration: none; }
+a.plain:hover { text-decoration: underline; text-decoration-color: var(--muted); }
+
+.topbar { border-bottom: 1px solid var(--line); background: var(--panel); }
+.topbar .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { font-weight: 700; letter-spacing: -0.2px; white-space: nowrap; }
+.brand span { color: var(--muted); font-weight: 500; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav a {
+  color: var(--muted); text-decoration: none; padding: 7px 12px;
+  border-radius: 7px; font-size: 14px;
+}
+nav a:hover { background: var(--panel-2); color: var(--text); }
+nav a.on { background: var(--accent); color: #fff; }
+
+main { padding: 26px 20px 40px; }
+footer { padding: 0 20px 32px; }
+
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.3px; }
+h2 { font-size: 16px; margin: 0 0 14px; }
+.sub { color: var(--muted); margin: 0 0 22px; font-size: 14px; max-width: 100ch; }
+/* Explanatory text inside a card stops well short of the full width; tables don't. */
+.card > p.small, .card > p.sub { max-width: 110ch; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 18px; margin-bottom: 18px;
+}
+.card-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-bottom: 14px; flex-wrap: wrap;
+}
+.card-head h2 { margin: 0; }
+/* Groups the panel-opening buttons so they wrap together rather than one at a time. */
+.btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+.stat .value { font-size: 26px; font-weight: 650; margin-top: 6px; letter-spacing: -0.5px; }
+.stat .value.big { font-size: 32px; }
+.pos { color: var(--pos); } .neg { color: var(--neg); } .warnc { color: var(--warn); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th {
+  text-align: left; color: var(--muted); font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+
+/* A holding held in several accounts: one summary row that opens to show the
+   split. The whole row is the control, so the hit target is the whole row. */
+.group-row { cursor: pointer; }
+.group-row:hover { background: var(--panel-2); }
+.group-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.caret {
+  display: inline-block; width: 0; height: 0; margin-right: 7px;
+  vertical-align: middle;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  transition: transform 0.12s ease;
+}
+.group-row[aria-expanded="true"] .caret { transform: rotate(90deg); }
+/* Indented and borderless, so the split reads as detail of the row above rather
+   than as more holdings. */
+.group-part > td { border-bottom: 0; padding-top: 4px; padding-bottom: 4px; }
+/* The run of detail rows is borderless inside, but the last one closes the group
+   off so it doesn't run into the next holding. */
+.group-part-end > td { border-bottom: 1px solid var(--line); padding-bottom: 9px; }
+td.indent { padding-left: 28px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .caret { transition: none; }
+}
+
+/* Pagination, built by tables.js and inserted after the table it belongs to. */
+.pager {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 2px 0; font-size: 13px; color: var(--muted);
+}
+.pager-size { display: flex; align-items: center; gap: 6px; margin: 0; }
+.pager-size select { width: auto; padding: 4px 8px; font-size: 13px; }
+.pager-info { font-variant-numeric: tabular-nums; }
+.pager-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.pager-nav button { min-width: 30px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+.pager-nav button.current {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.pager-nav button[disabled] { opacity: 0.4; cursor: default; }
+.pager-gap { padding: 0 2px; }
+/* Let the table grow to its content and scroll, rather than crushing columns
+   (which clipped the inline edit fields on narrow screens). */
+.table-scroll > table { width: auto; min-width: 100%; }
+
+.tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.tag.none { border-style: dashed; }
+
+input, select, button, textarea { font: inherit; }
+input, select {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; width: 100%;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.field { margin-bottom: 12px; }
+.grid { display: grid; gap: 12px; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+
+button, .btn {
+  background: var(--accent); color: #fff; border: 0; border-radius: 7px;
+  padding: 8px 14px; cursor: pointer; font-size: 14px; font-weight: 500;
+  text-decoration: none; display: inline-block; width: auto;
+}
+button:hover, .btn:hover { filter: brightness(1.1); }
+button.ghost, .btn.ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+button.danger, .btn.danger { background: transparent; color: var(--neg); padding: 4px 8px; }
+button.tiny, .btn.tiny { padding: 4px 9px; font-size: 12px; }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+form.inline { display: inline; }
+
+.toast { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+.toast.ok { background: rgba(63,191,127,.13); border: 1px solid rgba(63,191,127,.35); }
+.toast.err { background: rgba(239,95,104,.13); border: 1px solid rgba(239,95,104,.35); }
+
+.bar { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; min-width: 90px; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
+.drift-track {
+  position: relative; height: 20px; background: var(--panel-2);
+  border-radius: 4px; min-width: 130px;
+}
+.drift-track::before {
+  content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+  width: 1px; background: var(--line);
+}
+.drift-track > i { position: absolute; top: 4px; height: 12px; border-radius: 3px; }
+.drift-track > i.over { left: 50%; background: var(--warn); }
+.drift-track > i.under { right: 50%; background: var(--accent); }
+
+details > summary { cursor: pointer; color: var(--accent); font-size: 14px; padding: 4px 0; }
+details[open] > summary { margin-bottom: 12px; }
+
+.section-title {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); margin: 22px 0 8px; font-weight: 600;
+}
+.note {
+  background: var(--panel-2); border-left: 3px solid var(--warn);
+  padding: 10px 14px; border-radius: 0 7px 7px 0; font-size: 13px; margin-bottom: 16px;
+}
+.chart { width: 100%; height: 220px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; font-size: 13px; }
+.legend span { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.swatch { width: 10px; height: 10px; border-radius: 3px; }
+.stack { display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+.stack > i { display: block; }
+
+.toggle {
+  display: inline-flex; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 3px; gap: 2px;
+}
+.toggle button {
+  background: transparent; color: var(--muted); padding: 6px 14px;
+  border-radius: 6px; font-size: 13px;
+}
+.toggle button:hover { color: var(--text); filter: none; }
+.toggle button.on { background: var(--accent); color: #fff; }
+
+tfoot th { border-bottom: 0; color: var(--text); font-size: 13px; text-transform: none; }
+
+.edit-panel {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 16px; margin-top: 14px;
+}
+.edit-panel[hidden] { display: none; }
+
+/* The lot ledger's row: no cell padding of its own, so the panel inside it lines up
+   with the holding above rather than sitting in an indented box. */
+tr.ledger-row > td { padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+tr.ledger-row .edit-panel { margin-top: 0; }
+
+/* Row action menu */
+.menu { position: relative; display: inline-block; }
+.menu-btn {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  padding: 2px 9px; border-radius: 6px; font-size: 17px; line-height: 1.2;
+  letter-spacing: 1px;
+}
+.menu-btn:hover, .menu-btn[aria-expanded="true"] {
+  background: var(--panel-2); color: var(--text); border-color: var(--line); filter: none;
+}
+.menu-list {
+  position: fixed; z-index: 50; min-width: 170px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.menu-list[hidden] { display: none; }
+.menu-list button {
+  width: 100%; text-align: left; background: transparent; color: var(--text);
+  padding: 8px 11px; border-radius: 6px; font-size: 14px; font-weight: 400;
+}
+/* A download is a plain link, not a form post, so it has to be an <a>; make it read
+   as one of the menu's items rather than as a link dropped into a menu. */
+.menu-list a {
+  display: block; width: 100%; text-align: left; color: var(--text);
+  padding: 8px 11px; border-radius: 6px; font-size: 14px; text-decoration: none;
+}
+.menu-list a:hover { background: var(--panel-2); text-decoration: none; }
+.menu-list button:hover { background: var(--panel-2); filter: none; }
+.menu-list button.danger { color: var(--neg); }
+.menu-list form { display: block; width: 100%; }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+
+/* Inline edit fields */
+.inline-edit {
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 8px; width: 100%; min-width: 92px; max-width: 150px; color: var(--text);
+  font-variant-numeric: tabular-nums; transition: background .12s, border-color .12s;
+}
+.inline-edit:hover { background: var(--panel-2); border-color: var(--line); }
+.inline-edit:focus {
+  background: var(--panel-2); border-color: var(--accent);
+  outline: 2px solid var(--accent); outline-offset: -1px;
+}
+.inline-edit.num { text-align: right; }
+/* Wide enough for the longest bucket name ("Precious Metals") without truncating. */
+select.inline-edit { min-width: 136px; max-width: 180px; }
+.inline-edit.saving { opacity: .55; }
+.inline-edit.saved { border-color: var(--pos); background: rgba(63,191,127,.14); }
+.inline-edit.failed { border-color: var(--neg); background: rgba(239,95,104,.16); }
+.inline-edit[readonly] {
+  color: var(--muted); cursor: not-allowed; background: transparent; border-color: transparent;
+}
+.inline-edit[readonly]:hover { background: transparent; border-color: transparent; }
+/* A property's value and loan balance, one above the other in a single cell. */
+.stacked-inputs { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.stacked-inputs label { display: flex; align-items: center; gap: 6px; margin: 0; }
+
+.toast-live {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; display: flex; align-items: center; gap: 14px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.4); font-size: 14px;
+  opacity: 0; pointer-events: none; transition: opacity .16s, transform .16s; z-index: 90;
+}
+.toast-live.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.toast-live.err { border-color: rgba(239,95,104,.5); }
+.toast-live button {
+  background: var(--panel-2); color: var(--accent); border: 1px solid var(--line);
+  padding: 4px 12px; border-radius: 6px; font-size: 13px;
+}
+
+.hint { font-size: 12px; color: var(--muted); }
+
+.login-wrap { min-height: 82vh; display: flex; align-items: center; justify-content: center; }
+.login-card { width: 100%; max-width: 380px; }
+.login-card .brand { font-size: 20px; }
+
+th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-sort]:hover { color: var(--text); }
+th[data-sort]::after {
+  content: "↕"; opacity: .3; margin-left: 5px; font-size: 10px;
+}
+th[data-sort].sorted { color: var(--text); }
+th[data-sort][data-dir="asc"]::after { content: "↑"; opacity: 1; color: var(--accent); }
+th[data-sort][data-dir="desc"]::after { content: "↓"; opacity: 1; color: var(--accent); }
+
+.filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.filters select { width: auto; min-width: 130px; }
+
+.ledger-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ledger-btn .chev { display: inline-block; transition: transform .15s; font-size: 11px; }
+.ledger-btn[aria-expanded="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ledger-btn[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.lot-buy { color: var(--pos); }
+.lot-sell { color: var(--warn); }
+/* A transfer is neither: nothing was bought or sold, the units just changed address. */
+.lot-move { color: var(--muted); }
+
+/* Chart */
+.chart-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+}
+[data-role="controls"] { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.series-toggle { display: flex; gap: 12px; flex-wrap: wrap; }
+.series-toggle label {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+.series-toggle input { width: auto; }
+[data-role="canvas"] svg { display: block; overflow: visible; }
+[data-role="caption"] { font-size: 13px; color: var(--muted); margin-top: 10px; }
+
+.tag.latest {
+  border-color: var(--pos); color: var(--pos);
+  background: rgba(63,191,127,.12); margin-left: 6px;
+}
+
+/* Net worth chart hover breakdown */
+[data-chart="networth"] { position: relative; }
+.nw-tip {
+  position: fixed; z-index: 40; pointer-events: none;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 11px 14px; min-width: 260px; max-width: 340px;
+  max-height: 92vh; overflow: hidden;
+  box-shadow: 0 14px 40px rgba(0,0,0,.45);
+  font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.nw-tip[hidden] { display: none; }
+.nw-tip-head {
+  font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  font-size: 12px; margin-bottom: 8px;
+}
+.nw-tip-note { color: var(--muted); font-weight: 500; text-transform: none; }
+.nw-tip-row { display: flex; justify-content: space-between; gap: 16px; padding: 1px 0; }
+.nw-tip-row span { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.nw-tip-row span i {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; display: inline-block;
+}
+.nw-tip-row b { font-weight: 600; white-space: nowrap; }
+.nw-tip-total {
+  border-top: 1px solid var(--line); margin-top: 6px; padding-top: 7px;
+  font-weight: 700;
+}
+.nw-tip-total:first-of-type { border-top: 0; margin-top: 0; }
+.nw-tip-sub { color: var(--muted); padding-left: 10px; }
+.nw-tip-tree { color: var(--line); font-size: 11px; }
+.nw-tip-none { color: var(--muted); font-style: italic; }
+.nw-tip-net {
+  border-top: 1px solid var(--line); margin-top: 7px; padding-top: 8px; font-weight: 700;
+}

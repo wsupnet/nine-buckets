@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Nine Buckets{% endblock %}</title>
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">Nine <span>Buckets</span></div>
+    <nav>
+      <a href="/" class="{{ 'on' if nav=='dashboard' }}">Dashboard</a>
+      <a href="/items" class="{{ 'on' if nav=='items' }}">Assets &amp; Liabilities</a>
+      <a href="/holdings" class="{{ 'on' if nav=='holdings' }}">Holdings</a>
+      <a href="/accounts" class="{{ 'on' if nav=='accounts' }}">Accounts</a>
+      <a href="/allocation" class="{{ 'on' if nav=='allocation' }}">Allocation</a>
+      <a href="/history" class="{{ 'on' if nav=='history' }}">History</a>
+      {% if auth_enabled %}
+      <form method="post" action="/logout" class="inline" style="margin-left:auto">
+        <button class="ghost tiny" type="submit">Sign out</button>
+      </form>
+      {% endif %}
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  {% if flash %}<div class="toast ok">{{ flash }}</div>{% endif %}
+  {% if error %}<div class="toast err">{{ error }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+
+<script src="{{ asset('app.js') }}"></script>
+<script src="{{ asset('inline.js') }}"></script>
+<script src="{{ asset('tables.js') }}"></script>
+{% block scripts %}{% endblock %}
+
+<footer class="wrap muted small">
+  Base currency USD · FX
+  {% for c, r in rates.items() if c != 'USD' %}
+    · 1 {{ c }} = ${{ '%.5f'|format(r.usd_per_unit) }}
+  {% endfor %}
+</footer>
+</body>
+</html>

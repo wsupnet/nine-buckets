@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+
+<div class="card-head" style="margin-bottom:6px">
+  <div>
+    <h1>Accounts</h1>
+    <p class="sub" style="margin:4px 0 0">The same items grouped by where they sit rather than
+    what they are — so one account can span several buckets.</p>
+  </div>
+  <div class="toggle" role="group" aria-label="View mode">
+    <button type="button" class="on" data-view="list">List</button>
+    <button type="button" data-view="matrix">Matrix</button>
+    <button type="button" data-view="both">Both</button>
+  </div>
+</div>
+
+<div class="stats" style="margin-top:18px">
+  <div class="stat">
+    <div class="label">Accounts</div>
+    <div class="value">{{ av.groups|rejectattr('id','none')|list|length }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Assets held</div>
+    <div class="value pos" data-bind="accounts-assets">{{ av.grand_assets|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Liabilities</div>
+    <div class="value neg" data-bind="accounts-liabilities">{{ av.grand_liabilities|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Multi-bucket accounts</div>
+    <div class="value">{{ av.groups|selectattr('bucket_count','greaterthan',1)|list|length }}</div>
+  </div>
+</div>
+
+{# Balances are edited here so a monthly update can go account by account without
+   switching to Assets & Liabilities. Same inline-save fields as that page; priced
+   holdings stay read-only because their value comes from quantity × fetched price,
+   and quantity usually comes from the lot ledger. #}
+{% macro balance_cell(i) %}
+  {% if i.kind == 'priced' %}
+    <span class="muted small" title="Edit quantity on Holdings or Assets &amp; Liabilities">
+      {% if i.effective_quantity is not none %}{{ i.effective_quantity|round(4)|num }}{% if i.is_metal %} {{ i.unit }}{% endif %}{% else %}—{% endif %}
+      {% if i.last_price %} × {{ '%.2f'|format(i.last_price) }}{% endif %}
+    </span>
+  {% elif i.kind == 'property' %}
+    <div class="stacked-inputs">
+      <label class="hint">value
+        <input class="inline-edit num" inputmode="decimal"
+               data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
+               data-inline-label="Value of {{ i.name }}" aria-label="Value of {{ i.name }}"
+               value="{{ i.amount|num }}"></label>
+      <label class="hint">loan
+        <input class="inline-edit num" inputmode="decimal"
+               data-inline-url="/items/{{ i.id }}/inline" data-inline-field="loan_balance"
+               data-inline-label="Loan balance for {{ i.name }}" aria-label="Loan balance for {{ i.name }}"
+               value="{{ i.loan_balance|num }}"></label>
+      <span class="hint">{{ i.currency }}</span>
+    </div>
+  {% else %}
+    <input class="inline-edit num" inputmode="decimal"
+           data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
+           data-inline-label="{{ i.name }}" aria-label="Balance of {{ i.name }}"
+           value="{{ i.amount|num }}">
+    <span class="hint">{{ i.currency }}</span>
+  {% endif %}
+{% endmacro %}
+
+{# ---------------- Matrix ---------------- #}
+<section data-panel="matrix" hidden>
+<div class="card">
+  <h2>Account × bucket</h2>
+  <p class="small muted" style="margin-top:-8px">Cells are assets only. Liabilities have their
+  own column so they stay visible without being blended into the bucket figures.</p>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          {% for b in av.matrix_buckets %}
+            <th class="num" style="white-space:nowrap">
+              <i class="swatch" style="background: {{ colors.get(b.key,'#888') }}; display:inline-block; margin-right:5px"></i>{{ b.name }}
+            </th>
+          {% endfor %}
+          {% if av.has_unbucketed %}<th class="num">Unassigned</th>{% endif %}
+          <th class="num">Assets</th>
+          <th class="num">Liabilities</th>
+          <th class="num">Net</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in av.matrix_rows %}
+        {% set ak = r.id if r.id is not none else 'none' %}
+        <tr>
+          <td>{{ r.name }}</td>
+          {% for b in av.matrix_buckets %}
+            <td class="num {{ 'muted' if not r.cells[b.id] }}" data-bind="acct-{{ ak }}-cell-{{ b.id }}">
+              {{ r.cells[b.id]|money if r.cells[b.id] else '·' }}
+            </td>
+          {% endfor %}
+          {% if av.has_unbucketed %}
+            <td class="num {{ 'muted' if not r.cells['none'] }}" data-bind="acct-{{ ak }}-cell-none">
+              {{ r.cells['none']|money if r.cells['none'] else '·' }}
+            </td>
+          {% endif %}
+          <td class="num" data-bind="acct-{{ ak }}-assets">{{ r.assets_total|money }}</td>
+          <td class="num {{ 'neg' if r.liabilities_total }}">
+            {% if r.liabilities_total %}<span data-bind="acct-{{ ak }}-liabilities">{{ r.liabilities_total|money }}</span>{% else %}·{% endif %}
+          </td>
+          <td class="num" data-bind="acct-{{ ak }}-net">{{ r.net|money }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--line)">
+          <th>Total</th>
+          {% for b in av.matrix_buckets %}
+            <th class="num" data-bind="accounts-col-{{ b.id }}">{{ av.col_totals[b.id]|money }}</th>
+          {% endfor %}
+          {% if av.has_unbucketed %}<th class="num" data-bind="accounts-col-none">{{ av.col_totals['none']|money }}</th>{% endif %}
+          <th class="num" data-bind="accounts-assets">{{ av.grand_assets|money }}</th>
+          <th class="num" data-bind="accounts-liabilities">{{ av.grand_liabilities|money }}</th>
+          <th class="num" data-bind="accounts-net">{{ (av.grand_assets - av.grand_liabilities)|money }}</th>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+</section>
+
+{# ---------------- List ---------------- #}
+<section data-panel="list">
+{% for g in av.groups %}
+{% set ak = g.id if g.id is not none else 'none' %}
+<div class="card">
+  <div class="card-head">
+    <h2>
+      {{ g.name }}
+      {% if g.bucket_count > 1 %}<span class="tag">{{ g.bucket_count }} buckets</span>{% endif %}
+    </h2>
+    <div class="small muted">
+      Assets <span data-bind="acct-{{ ak }}-assets">{{ g.assets_total|money }}</span>
+      {% if g.liabilities_total %}
+        · Liabilities <span class="neg" data-bind="acct-{{ ak }}-liabilities">{{ g.liabilities_total|money }}</span>
+        · Net <strong data-bind="acct-{{ ak }}-net">{{ g.net|money }}</strong>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if g.splits %}
+  <div class="stack" style="height:10px; margin-bottom:10px">
+    {% for s in g.splits %}
+      <i style="width: {{ s.pct }}%; background: {{ colors.get(s.bucket_key, '#8d99a8') }}"
+         title="{{ s.bucket_name }} {{ s.pct|round(1) }}%"></i>
+    {% endfor %}
+  </div>
+  <div class="legend" style="margin:0 0 14px">
+    {% for s in g.splits %}
+      <span><i class="swatch" style="background: {{ colors.get(s.bucket_key,'#8d99a8') }}"></i>
+        {{ s.bucket_name }} <span data-bind="acct-{{ ak }}-split-{{ s.bucket_key or 'none' }}">{{ s.value_usd|money }} ({{ s.pct|round(0)|int }}%)</span></span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Holding</th><th>Bucket</th><th>Type</th><th class="num">Balance</th><th class="num">Value (USD)</th></tr>
+    </thead>
+    <tbody>
+      {% for i in g.assets %}
+      <tr>
+        <td>{{ i.name }}{% if i.ticker %} <span class="tag">{{ i.ticker }}</span>{% endif %}</td>
+        <td>
+          {% if i.bucket_name %}
+            <span class="tag"><i class="swatch" style="background: {{ colors.get(i.bucket_key,'#888') }}; display:inline-block; margin-right:5px; vertical-align:middle"></i>{{ i.bucket_name }}</span>
+          {% else %}<span class="tag none">unassigned</span>{% endif %}
+        </td>
+        <td class="muted small">{{ i.kind }}</td>
+        <td class="num">{{ balance_cell(i) }}</td>
+        <td class="num" data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No assets in this account.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if g.liabilities %}
+  <div class="section-title">Liabilities</div>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Liability</th><th>Bucket</th><th>Type</th><th class="num">Balance</th><th class="num">Value (USD)</th></tr>
+    </thead>
+    <tbody>
+      {% for i in g.liabilities %}
+      <tr>
+        <td>{{ i.name }}</td>
+        <td>
+          {% if i.bucket_name %}
+            <span class="tag"><i class="swatch" style="background: {{ colors.get(i.bucket_key,'#888') }}; display:inline-block; margin-right:5px; vertical-align:middle"></i>{{ i.bucket_name }}</span>
+          {% else %}<span class="tag none">unassigned</span>{% endif %}
+        </td>
+        <td class="muted small">liability</td>
+        <td class="num">{{ balance_cell(i) }}</td>
+        <td class="num neg">−<span data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+</section>
+
+<div class="card">
+  <div class="card-head" style="margin-bottom:0">
+    <h2>Manage accounts</h2>
+    <button type="button" data-toggle="addacct" aria-expanded="false"
+            data-label-open="− Add account" data-label-closed="+ Add account">+ Add account</button>
+  </div>
+
+  <div id="addacct" hidden style="margin-top:16px">
+    <form method="post" action="/accounts" class="grid g2" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>New account name</label>
+        <input name="name" required placeholder="e.g. Broker A">
+      </div>
+      <div><button type="submit">Add account</button></div>
+    </form>
+  </div>
+
+  <div class="table-scroll" style="margin-top:16px">
+  <table>
+    <thead><tr><th>Account</th><th class="num">Items</th><th class="num">Net</th><th></th></tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      {% set g = av.groups|selectattr('id','equalto',a.id)|first %}
+      <tr>
+        <td>{{ a.name }}</td>
+        <td class="num muted">{{ (g.assets|length + g.liabilities|length) if g else 0 }}</td>
+        <td class="num"{% if g %} data-bind="acct-{{ a.id }}-net"{% endif %}>{{ g.net|money if g else '—' }}</td>
+        <td>
+          <div class="row-actions">
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                      aria-label="Actions for {{ a.name }}">⋯</button>
+              <div class="menu-list" hidden>
+                <button type="button" onclick="openPanel('acct-{{ a.id }}')">Rename</button>
+                <div class="menu-sep"></div>
+                <form method="post" action="/accounts/{{ a.id }}/delete"
+                      onsubmit="return confirm('Delete {{ a.name }}? Its items are kept and moved to “No account”.')">
+                  <button class="danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">No accounts yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% for a in accounts %}
+  <div class="edit-panel" id="acct-{{ a.id }}" hidden>
+    <div class="section-title" style="margin-top:0">Rename “{{ a.name }}”</div>
+    <form method="post" action="/accounts/{{ a.id }}" class="grid g2" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>Account name</label>
+        <input name="name" value="{{ a.name }}" required>
+      </div>
+      <div style="display:flex; gap:8px">
+        <button type="submit">Save</button>
+        <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+
+  <p class="small muted" style="margin-bottom:0">Deleting an account never deletes holdings —
+  they move to “No account” so nothing silently vanishes from your net worth.</p>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const KEY = 'accountsView';
+  const btns = document.querySelectorAll('.toggle button[data-view]');
+  function apply(view) {
+    document.querySelectorAll('[data-panel]').forEach(p => {
+      p.hidden = !(view === 'both' || p.dataset.panel === view);
+    });
+    btns.forEach(b => b.classList.toggle('on', b.dataset.view === view));
+    try { localStorage.setItem(KEY, view); } catch (e) {}
+  }
+  btns.forEach(b => b.addEventListener('click', () => apply(b.dataset.view)));
+  let saved = 'list';
+  try { saved = localStorage.getItem(KEY) || 'list'; } catch (e) {}
+  apply(saved);
+</script>
+{% endblock %}

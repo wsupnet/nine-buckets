@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+{% block title %}Holdings{% endblock %}
+{% block content %}
+
+<h1>Holdings</h1>
+<p class="sub">Priced positions with cost basis. Click the
+<strong>▸ lots</strong> button under any holding to open its ledger and record buys and sells —
+a holding with lots takes its quantity from the ledger instead of a typed-in number.
+<a href="/import">Import trade history from a spreadsheet →</a></p>
+
+{# Transfers are shown apart from trades: nothing was bought or sold, so they carry
+   no realized gain and belong in neither the buys nor the sells total. #}
+{% set SIDE_LABEL = {'buy': 'buy', 'sell': 'sell',
+                     'transfer_in': 'moved in', 'transfer_out': 'moved out'} %}
+{% set SIDE_CLASS = {'buy': 'lot-buy', 'sell': 'lot-sell',
+                     'transfer_in': 'lot-move', 'transfer_out': 'lot-move'} %}
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Market value</div>
+    <div class="value">{{ totals.value|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Cost basis</div>
+    <div class="value">{{ totals.cost|money }}</div>
+    <div class="small muted">of holdings with lots</div>
+  </div>
+  <div class="stat">
+    <div class="label">Unrealized</div>
+    <div class="value {{ 'pos' if totals.unrealized >= 0 else 'neg' }}">
+      {{ '+' if totals.unrealized >= 0 }}{{ totals.unrealized|money }}
+    </div>
+  </div>
+  <div class="stat">
+    <div class="label">Realized</div>
+    <div class="value {{ 'pos' if totals.realized >= 0 else 'neg' }}">
+      {{ '+' if totals.realized >= 0 }}{{ totals.realized|money }}
+    </div>
+    <div class="small muted">FIFO matched</div>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ #}
+{% macro ledger_button(i) %}
+  {% set n = lots[i.id]|length if i.id in lots else 0 %}
+  <button class="ghost tiny ledger-btn" type="button" data-panel-toggle
+          style="margin-top:6px" aria-expanded="false" aria-controls="ledger-{{ i.id }}"
+          onclick="togglePanel('ledger-{{ i.id }}', this)">
+    <span class="chev">▸</span>
+    {% if n %}{{ n }} lot{{ '' if n == 1 else 's' }}{% else %}Add lots{% endif %}
+  </button>
+{% endmacro %}
+
+{# The ledger opens as a row directly beneath its holding rather than at the foot of
+   the section — with more than a few holdings, a panel at the bottom meant scrolling away
+   from the row you just clicked and back again to read it. #}
+{% macro ledger_row(i, cols) %}
+<tr class="ledger-row" data-attached hidden>
+  <td colspan="{{ cols }}">{{ ledger_panel(i) }}</td>
+</tr>
+{% endmacro %}
+
+{% macro ledger_panel(i) %}
+{% set mine = lots[i.id] if i.id in lots else [] %}
+{% set u = i.unit or 'toz' %}
+<div class="edit-panel" id="ledger-{{ i.id }}" hidden>
+  <div class="section-title" style="margin-top:0">
+    {{ i.name }} lot ledger{% if i.ticker %} · {{ i.ticker }}{% endif %}
+  </div>
+
+  {% if mine %}
+  <div class="table-scroll" style="margin-bottom:14px">
+    <table id="ledger-table-{{ i.id }}" data-paginate="10">
+      <thead>
+        <tr>
+          <th>Date</th><th>Side</th>
+          <th class="num">{{ 'Weight' if i.is_metal else 'Qty' }}</th>
+          <th class="num">{{ 'Spot' if i.is_metal else 'Price' }}</th>
+          {% if i.is_metal %}<th class="num">Premium</th><th class="num">Over spot</th>{% endif %}
+          <th class="num">Fee</th><th class="num">Total</th><th>Note</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for l in mine %}
+        {% set lu = l.unit or u %}
+        {% set per_unit = l.price + (l.premium or 0) %}
+        <tr>
+          <td>{{ l.trade_date }}</td>
+          <td class="{{ SIDE_CLASS.get(l.side, 'lot-sell') }}">{{ SIDE_LABEL.get(l.side, l.side) }}</td>
+          <td class="num">{{ l.quantity|num }}{% if i.is_metal %} <span class="hint">{{ lu }}</span>{% endif %}</td>
+          <td class="num">{{ '%.2f'|format(l.price) }}</td>
+          {% if i.is_metal %}
+            <td class="num {{ 'muted' if not l.premium }}">
+              {{ '%.2f'|format(l.premium) if l.premium else '·' }}
+            </td>
+            <td class="num muted">
+              {{ '%.1f'|format(l.premium / l.price * 100) ~ '%' if l.premium and l.price else '·' }}
+            </td>
+          {% endif %}
+          <td class="num muted">{{ '%.2f'|format(l.fee) if l.fee else '·' }}</td>
+          <td class="num">
+            {{ '{:,.2f}'.format(l.quantity * per_unit + (l.fee if l.side == 'buy' else -l.fee)) }}
+            <span class="hint">{{ l.currency }}</span>
+          </td>
+          <td class="muted small">{{ l.note or '—' }}</td>
+          <td>
+            <div class="row-actions">
+              {% if l.transfer_id %}
+                <span class="hint" title="Reverse the move on the Assets &amp; Liabilities page — deleting one side alone would duplicate or lose the units">from a move</span>
+              {% else %}
+              <form method="post" action="/lots/{{ l.id }}/delete"
+                    onsubmit="return confirm('Delete this {{ l.side }} of {{ l.quantity|num }} on {{ l.trade_date }}?')">
+                <button class="danger tiny" type="submit">Delete</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if i.lots %}
+  <p class="small muted" style="margin-top:0">
+    {# Only metals are normalised to troy ounces; a share count is just a count. #}
+    Holding {{ i.lots.quantity|round(4)|num }}{% if i.is_metal %} troy oz{% if u != 'toz' %}
+      ({{ i.effective_quantity|round(4)|num }} {{ i.unit_label }}){% endif %}{% endif %}
+    at an average cost of
+    {{ '%.2f'|format(i.lots.avg_cost) if i.lots.avg_cost else '—' }}
+    {{ i.price_currency or i.currency }}{{ '/toz' if i.is_metal }}.
+    {% if i.premium_paid_usd %}Premium paid to date {{ i.premium_paid_usd|money }}.{% endif %}
+    Realized gain {{ i.lots.realized|round(2) }} {{ i.price_currency or i.currency }} (FIFO).
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="small muted" style="margin-top:0">No lots recorded. This holding still uses its
+  manually entered {{ 'weight' if i.is_metal else 'quantity' }}
+  ({{ i.effective_quantity|round(4)|num or '—' }}{% if i.is_metal %} {{ i.unit_label }}{% endif %}).
+  Adding a lot switches it to the ledger.</p>
+  {% endif %}
+
+  <form method="post" action="/items/{{ i.id }}/lots">
+    <div class="grid g3">
+      <div class="field">
+        <label>Side</label>
+        <select name="side"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+      </div>
+      <div class="field">
+        <label>Trade date</label>
+        <input type="date" name="trade_date" required>
+      </div>
+      {% if i.is_metal %}
+        <div class="field">
+          <label>Weight</label>
+          <input name="quantity" inputmode="decimal" required placeholder="1">
+        </div>
+        <div class="field">
+          <label>Unit</label>
+          <select name="unit">
+            {% for key, label in units.items() %}
+              <option value="{{ key }}" {{ 'selected' if key == u }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Spot price per unit ({{ i.price_currency or 'USD' }})</label>
+          <input name="price" inputmode="decimal" required placeholder="2050.00">
+        </div>
+        <div class="field">
+          <label>Premium per unit <span class="muted">(over spot)</span></label>
+          <input name="premium" inputmode="decimal" placeholder="85.00">
+        </div>
+      {% else %}
+        <div class="field">
+          <label>Quantity</label>
+          <input name="quantity" inputmode="decimal" required placeholder="10">
+        </div>
+        <div class="field">
+          <label>Price per unit ({{ i.price_currency or i.currency }})</label>
+          <input name="price" inputmode="decimal" required placeholder="250.00">
+        </div>
+      {% endif %}
+      <div class="field">
+        <label>Fee <span class="muted">(optional)</span></label>
+        <input name="fee" inputmode="decimal" placeholder="0">
+      </div>
+      <div class="field">
+        <label>Note <span class="muted">(optional)</span></label>
+        <input name="note" placeholder="{{ 'e.g. dealer invoice' if i.is_metal else 'e.g. monthly buy' }}">
+      </div>
+      <div class="field">
+        <label><span class="funding-label">Paid from</span>
+          <span class="muted">(required)</span></label>
+        <select name="funded_from" class="funding-select" required>
+          <option value="" disabled selected>Choose…</option>
+          <option value="external" class="funding-external">— external funds (don't move cash) —</option>
+          {% for c in cash_items %}
+            <option value="{{ c.id }}">
+              {{ c.name }}{% if c.account_name %} · {{ c.account_name }}{% endif %}
+              ({{ c.amount|num or 0 }} {{ c.currency }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px">
+      <button type="submit">Add lot</button>
+      <button class="ghost" type="button" onclick="closePanels()">Close</button>
+    </div>
+    <p class="small muted funding-help" style="margin:10px 0 0">
+      <strong>Paid from</strong> moves the money: a buy debits the account you pick.
+      Choose <em>external funds</em> for a purchase paid by fresh transfer, and for
+      back-history you're entering after the fact — an old purchase shouldn't move today's
+      balance. Deleting the lot puts the money back.
+    </p>
+    <p class="small muted funding-help-sell" style="margin:10px 0 0" hidden>
+      <strong>Deposit to</strong> moves the money: the sale proceeds are credited to the
+      account you pick. Choose <em>external</em> if the money left to somewhere you don't
+      track here, or for back-history entered after the fact. Deleting the lot reverses it.
+    </p>
+    {% if i.is_metal %}
+    <p class="small muted" style="margin:10px 0 0">Enter the spot price on the day and the
+    dealer premium separately — cost basis uses spot + premium, and the premium is tracked so
+    you can see what the markup cost you.</p>
+    {% endif %}
+  </form>
+</div>
+{% endmacro %}
+
+{# ------------------------------------------------------------------ #}
+{% macro duplicates_card() %}
+<div class="card">
+  <div class="card-head" style="margin-bottom:0">
+    <button type="button" data-toggle="duppanel" aria-expanded="false"
+            data-label-open="− Possible duplicates"
+            data-label-closed="Possible duplicates ({{ duplicates|length }})">Possible duplicates ({{ duplicates|length }})</button>
+    <span class="small muted">{{ duplicates|length }} asset{{ '' if duplicates|length == 1 else 's' }}
+      listed twice in the same account — worth a look, not urgent</span>
+  </div>
+  <div id="duppanel" hidden style="margin-top:18px">
+  <p class="small muted" style="margin-top:0">These tickers appear on more than one row
+  <em>within the same account</em>, which usually means one row was typed by hand and another
+  came from an import — so net worth is counting the asset twice. Keep the one with the lot
+  ledger; it carries the cost basis. Delete the other only once you've checked the remaining
+  quantity against the wallet itself.</p>
+  <p class="small muted">Holding the same asset in two <em>different</em> accounts is a normal
+  split and isn't flagged here.</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Ticker</th><th>Holding</th><th>Account</th><th class="num">Qty</th>
+      <th class="num">Value</th><th>Basis</th><th></th></tr></thead>
+      <tbody>
+      {% for d in duplicates %}
+        {% for i in d['items'] %}
+        <tr>
+          <td>{% if loop.first %}<span class="tag">{{ d.ticker }}</span>{% endif %}</td>
+          <td>{{ i.name }}</td>
+          <td class="muted small">{{ i.account_name or '— none —' }}</td>
+          <td class="num">{{ i.effective_quantity|num or '—' }}</td>
+          <td class="num">{{ i.value_usd|money }}</td>
+          <td class="small">
+            {% if i.has_lots %}<span class="pos">{{ lots[i.id]|length }} lots — keep this one</span>
+            {% else %}<span class="warnc">typed quantity, no cost basis</span>{% endif %}
+          </td>
+          <td>
+            <div class="row-actions">
+              {% if not i.has_lots %}
+              <form method="post" action="/items/{{ i.id }}/delete"
+                    onsubmit="return confirm('Delete {{ i.name }}? It has no lots, so no cost basis is lost. Check the remaining holding matches your wallet first.')">
+                <button class="danger tiny" type="submit">Delete</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+</div>
+{% endmacro %}
+
+<div class="card">
+  <div class="card-head">
+    <h2>Stocks &amp; crypto</h2>
+    <form method="post" action="/prices/refresh-all">
+      <button class="ghost tiny" type="submit">Refresh all prices &amp; FX</button>
+    </form>
+  </div>
+  <div class="table-scroll">
+  <table id="securities-table" data-sort-remember>
+    <thead>
+      <tr>
+        <th data-sort="text">Holding / lot ledger</th><th data-sort="text">Account</th><th class="num">Qty</th><th class="num">Price</th>
+        <th data-sort="num" class="num">Value</th><th data-sort="num" class="num">Cost basis</th>
+        <th data-sort="num" class="num">Unrealized</th><th data-sort="num" class="num">Realized</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for i in securities %}
+      <tr>
+        <td>
+          <div style="white-space:nowrap">
+            {{ i.name }}{% if i.ticker %} <span class="tag">{{ i.ticker }}</span>{% endif %}
+          </div>
+          {{ ledger_button(i) }}
+          {% if i.lots and i.lots.oversold %}
+            <div><span class="tag" style="border-color:var(--neg); color:var(--neg)">
+              sold {{ i.lots.oversold|num }} more than the ledger holds</span></div>
+          {% endif %}
+        </td>
+        <td class="muted small">{{ i.account_name or '—' }}</td>
+        <td class="num">
+          {{ i.effective_quantity|num or '—' }}
+          {% if i.has_lots %}<br><span class="hint">from lots</span>{% endif %}
+        </td>
+        <td class="num">
+          {% if i.last_price %}{{ '%.2f'|format(i.last_price) }}{% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="num" data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</td>
+        <td class="num" data-bind="holding-cost-{{ i.id }}">{{ i.cost_basis_usd|money }}</td>
+        <td class="num {{ '' if i.unrealized_usd is none else ('pos' if i.unrealized_usd >= 0 else 'neg') }}"
+            data-bind="holding-unreal-{{ i.id }}">{{ i.unrealized_usd|money }}</td>
+        <td class="num {{ '' if i.realized_usd is none else ('pos' if i.realized_usd >= 0 else 'neg') }}"
+            data-bind="holding-real-{{ i.id }}">{{ i.realized_usd|money }}</td>
+        <td>
+          <div class="row-actions">
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                      aria-label="Actions for {{ i.name }}">⋯</button>
+              <div class="menu-list" hidden>
+                <form method="post" action="/items/{{ i.id }}/refresh">
+                  <button type="submit">Fetch price</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+      {{ ledger_row(i, 9) }}
+    {% else %}
+      <tr data-empty="1"><td colspan="9" class="muted">No stock or crypto holdings yet — add one on the
+        <a href="/items">Assets &amp; Liabilities</a> page.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# ---------------------- Precious metals ---------------------------- #}
+<div class="card">
+  <div class="card-head">
+    <h2>Precious metals</h2>
+    <div class="small muted">
+      {{ metal_totals.toz|round(3) }} troy oz · {{ metal_totals.value|money }}
+      {% if metal_totals.premium %} · premium paid {{ metal_totals.premium|money }}{% endif %}
+    </div>
+  </div>
+  <p class="small muted" style="margin-top:-6px">Valued on <strong>spot</strong> price, not
+  futures. Weight is stored in troy ounces internally, so grams, kilos and pounds can be mixed
+  in one ledger.</p>
+
+  <div class="table-scroll">
+  <table id="metals-table" data-sort-remember>
+    <thead>
+      <tr>
+        <th data-sort="text">Metal / lot ledger</th><th data-sort="text">Account</th>
+        <th class="num">Weight</th><th data-sort="num" class="num">Troy oz</th>
+        <th class="num">Spot</th><th data-sort="num" class="num">Value</th>
+        <th data-sort="num" class="num">Cost basis</th><th data-sort="num" class="num">Premium paid</th>
+        <th data-sort="num" class="num">Unrealized</th><th data-sort="num" class="num">Realized</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for i in metals_held %}
+      <tr>
+        <td>
+          <div style="white-space:nowrap">
+            {{ i.name }}
+            {% if i.ticker %}<span class="tag">{{ metals[i.ticker].name if i.ticker in metals else i.ticker }}</span>{% endif %}
+          </div>
+          {{ ledger_button(i) }}
+          {% if i.lots and i.lots.oversold %}
+            <div><span class="tag" style="border-color:var(--neg); color:var(--neg)">
+              sold {{ i.lots.oversold|num }} toz more than the ledger holds</span></div>
+          {% endif %}
+        </td>
+        <td class="muted small">{{ i.account_name or '—' }}</td>
+        <td class="num">
+          {{ i.effective_quantity|round(4)|num or '—' }} <span class="hint">{{ i.unit }}</span>
+          {% if i.has_lots %}<br><span class="hint">from lots</span>{% endif %}
+        </td>
+        <td class="num muted">{{ i.qty_toz|round(4) if i.qty_toz else '—' }}</td>
+        <td class="num">
+          {% if i.spot_per_unit %}{{ '%.2f'|format(i.spot_per_unit) }}
+            <br><span class="hint">per {{ i.unit }}</span>
+          {% else %}<span class="muted">not fetched</span>{% endif %}
+        </td>
+        <td class="num" data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</td>
+        <td class="num" data-bind="holding-cost-{{ i.id }}">{{ i.cost_basis_usd|money }}</td>
+        <td class="num muted">{{ i.premium_paid_usd|money }}</td>
+        <td class="num {{ '' if i.unrealized_usd is none else ('pos' if i.unrealized_usd >= 0 else 'neg') }}"
+            data-bind="holding-unreal-{{ i.id }}">{{ i.unrealized_usd|money }}</td>
+        <td class="num {{ '' if i.realized_usd is none else ('pos' if i.realized_usd >= 0 else 'neg') }}"
+            data-bind="holding-real-{{ i.id }}">{{ i.realized_usd|money }}</td>
+        <td>
+          <div class="row-actions">
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                      aria-label="Actions for {{ i.name }}">⋯</button>
+              <div class="menu-list" hidden>
+                <form method="post" action="/items/{{ i.id }}/refresh">
+                  <button type="submit">Fetch spot</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+      {{ ledger_row(i, 11) }}
+    {% else %}
+      <tr data-empty="1"><td colspan="11" class="muted">No metals yet. Add one on the
+        <a href="/items">Assets &amp; Liabilities</a> page — choose
+        <em>Priced holding</em>, then <em>Precious metal</em>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# Informational, and deliberately below the holdings themselves: worth knowing about,
+   not worth a banner above the numbers you came to read. #}
+{% if duplicates %}{{ duplicates_card() }}{% endif %}
+
+{# ------------------- Closed positions (quantity zero) ---------------- #}
+{% if closed %}
+<div class="card">
+  <div class="card-head" style="margin-bottom:0">
+    <button type="button" data-toggle="closedpanel" aria-expanded="false"
+            data-label-open="− Closed positions"
+            data-label-closed="Closed positions ({{ closed|length }})">Closed positions ({{ closed|length }})</button>
+    <span class="small muted">Realized
+      {{ closed_realized|money }} across these</span>
+  </div>
+  <div id="closedpanel" hidden style="margin-top:18px">
+    <p class="small muted" style="margin-top:0">Bought and sold down to nothing, so they're kept
+    out of the tables above. They're not deleted: their lots still hold the realized gain, which
+    counts toward the totals, and the record of what you traded. If you buy back in they reappear
+    on their own.</p>
+    <div class="table-scroll">
+      <table id="closed-table" data-sort-remember>
+        <thead><tr><th data-sort="text">Holding / lot ledger</th><th data-sort="text">Account</th><th data-sort="num" class="num">Cost basis</th>
+        <th data-sort="num" class="num">Realized</th><th></th></tr></thead>
+        <tbody>
+        {% for i in closed %}
+          <tr>
+            <td>
+              <div style="white-space:nowrap">
+                {{ i.name }}{% if i.ticker %} <span class="tag">{{ i.ticker }}</span>{% endif %}
+              </div>
+              {{ ledger_button(i) }}
+              {% if i.lots and i.lots.oversold %}
+                <div><span class="tag" style="border-color:var(--neg); color:var(--neg)">
+                  sold {{ i.lots.oversold|num }} more than the ledger holds</span></div>
+              {% endif %}
+            </td>
+            <td class="muted small">{{ i.account_name or '—' }}</td>
+            <td class="num muted">{{ i.cost_basis_usd|money }}</td>
+            <td class="num {{ '' if i.realized_usd is none else ('pos' if i.realized_usd >= 0 else 'neg') }}">
+              {{ i.realized_usd|money }}
+            </td>
+            <td>
+              <div class="row-actions">
+                <div class="menu">
+                  <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                          aria-label="Actions for {{ i.name }}">⋯</button>
+                  <div class="menu-list" hidden>
+                    <form method="post" action="/items/{{ i.id }}/refresh">
+                      <button type="submit">Fetch price</button>
+                    </form>
+                    <div class="menu-sep"></div>
+                    <form method="post" action="/items/{{ i.id }}/delete"
+                          onsubmit="return confirm('Delete {{ i.name }} and its {{ lots[i.id]|length if i.id in lots else 0 }} lots? The realized gain history goes with it.')">
+                      <button class="danger" type="submit">Delete</button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          {{ ledger_row(i, 5) }}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ---------------------- All transactions ---------------------------- #}
+<div class="card">
+  <div class="card-head">
+    <h2>All transactions</h2>
+    <div class="filters">
+      <select data-filter-table="tx-table" data-filter-key="side" aria-label="Filter by side">
+        <option value="">All</option>
+        <option value="buy">Buys only</option>
+        <option value="sell">Sells only</option>
+        <option value="transfer_in">Moved in</option>
+        <option value="transfer_out">Moved out</option>
+      </select>
+      <select data-filter-table="tx-table" data-filter-key="holding" aria-label="Filter by holding">
+        <option value="">All holdings</option>
+        {% for i in holdings|sort(attribute='name') %}
+          {% if i.id in lots %}<option value="{{ i.name }}">{{ i.name }}</option>{% endif %}
+        {% endfor %}
+      </select>
+      <span class="small muted">
+        <span data-filter-count="tx-table">{{ transactions|length }}</span> shown
+      </span>
+    </div>
+  </div>
+
+  <p class="small muted" style="margin-top:-6px">
+    Every buy, sell and transfer across all holdings. Click any column heading to sort.
+    {{ tx_totals.buy_count }} buy{{ '' if tx_totals.buy_count == 1 else 's' }}
+    totalling {{ tx_totals.buys|money }} ·
+    {{ tx_totals.sell_count }} sell{{ '' if tx_totals.sell_count == 1 else 's' }}
+    totalling {{ tx_totals.sells|money }}{% if tx_totals.move_count %} ·
+    {{ tx_totals.move_count }} transfer{{ '' if tx_totals.move_count == 1 else 's' }},
+    which move cost basis without buying or selling and so count toward neither
+    total{% endif %}.
+  </p>
+
+  <div class="table-scroll">
+    <table id="tx-table" data-paginate="10">
+      <thead>
+        <tr>
+          <th data-sort="text" data-dir="desc" class="sorted">Date</th>
+          <th data-sort="text">Holding</th>
+          <th data-sort="text">Account</th>
+          <th data-sort="text">Side</th>
+          <th data-sort="num" class="num">Qty</th>
+          <th data-sort="num" class="num">Price</th>
+          <th data-sort="num" class="num">Premium</th>
+          <th data-sort="num" class="num">Fee</th>
+          <th data-sort="num" class="num">Value (USD)</th>
+          <th>Note</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for t in transactions %}
+        <tr data-side="{{ t.side }}" data-holding="{{ t.item_name }}">
+          <td>{{ t.trade_date }}</td>
+          <td>
+            {{ t.item_name }}{% if t.ticker %} <span class="tag">{{ t.ticker }}</span>{% endif %}
+          </td>
+          <td class="muted small">{{ t.account_name or '—' }}</td>
+          <td class="{{ SIDE_CLASS.get(t.side, 'lot-sell') }}">{{ SIDE_LABEL.get(t.side, t.side) }}</td>
+          <td class="num" data-value="{{ t.quantity }}">
+            {{ t.quantity|num }}{% if t.unit %} <span class="hint">{{ t.unit }}</span>{% endif %}
+          </td>
+          <td class="num" data-value="{{ t.price }}">{{ '%.2f'|format(t.price) }}
+            <span class="hint">{{ t.currency }}</span></td>
+          <td class="num muted" data-value="{{ t.premium or 0 }}">
+            {{ '%.2f'|format(t.premium) if t.premium else '·' }}
+          </td>
+          <td class="num muted" data-value="{{ t.fee }}">{{ '%.2f'|format(t.fee) if t.fee else '·' }}</td>
+          <td class="num" data-value="{{ t.net_value_usd }}">{{ t.net_value_usd|money }}</td>
+          <td class="muted small">{{ t.note or '—' }}</td>
+          <td>
+            <div class="row-actions">
+              {% if t.transfer_id %}
+                <span class="hint" title="Reverse the move on the Assets &amp; Liabilities page — deleting one side alone would duplicate or lose the units">from a move</span>
+              {% else %}
+              <form method="post" action="/lots/{{ t.id }}/delete"
+                    onsubmit="return confirm('Delete this {{ t.side }} of {{ t.quantity|num }} {{ t.item_name }} on {{ t.trade_date }}?')">
+                <button class="danger tiny" type="submit">Delete</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr data-empty="1"><td colspan="11" class="muted">
+          No transactions recorded yet. Open a holding's ledger above to add buys and sells.
+        </td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <h2>How cost basis is calculated</h2>
+  <p class="small muted" style="margin-bottom:0">
+    Sells are matched against buys oldest-first (FIFO). Fees increase the cost of a buy and
+    reduce the proceeds of a sell. For metals, cost basis is <strong>spot + premium</strong>, and
+    the premium is tracked separately so you can see what dealer markup has cost you. Weight is
+    normalised to troy ounces, so a 100 g bar and a 1 oz coin sit correctly in the same ledger —
+    and copper, which is quoted per pound upstream, is converted rather than being off by 14.6×.
+    A holding with no lots keeps its manually entered quantity and shows no basis, so you can add
+    ledgers one position at a time.
+  </p>
+  <p class="small muted" style="margin-bottom:0">
+    <strong>Moved in / moved out</strong> rows come from a holding move on the
+    <a href="/items">Assets &amp; Liabilities</a> page and are not trades. The units leave one
+    holding carrying their basis and arrive at the other keeping their original purchase dates,
+    so FIFO still matches the genuinely oldest units first and no gain is realized. If a network
+    fee meant less arrived than was sent, the full basis rides on the smaller quantity, which
+    raises its unit cost — the loss shows up as a lower market value, not as an invented sale.
+  </p>
+</div>
+
+{% endblock %}

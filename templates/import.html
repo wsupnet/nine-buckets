@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+{% block title %}Import trade history{% endblock %}
+{% block content %}
+
+<h1>Import trade history</h1>
+<p class="sub">Reads your balance-sheet spreadsheet and turns the Crypto and Precious Metals tabs
+into lot ledgers. Nothing is written until you've seen the preview and typed IMPORT.
+<a href="/holdings">Back to Holdings →</a></p>
+
+<div class="card">
+  <div class="card-head">
+    <h2>1 · Upload the spreadsheet</h2>
+    {% if parsed %}
+    <form method="post" action="/import/discard">
+      <button class="ghost tiny" type="submit">Discard staged file</button>
+    </form>
+    {% endif %}
+  </div>
+  <form method="post" action="/import/upload" enctype="multipart/form-data">
+    <div class="grid g3">
+      <div class="field">
+        <label>Spreadsheet <span class="muted">(.xlsx)</span></label>
+        <input type="file" name="file" accept=".xlsx,.xlsm" required>
+      </div>
+    </div>
+    <button type="submit">Read spreadsheet</button>
+  </form>
+  <p class="small muted" style="margin-bottom:0">
+    Sells are read from a negative quantity. A tab named <strong>Crypto</strong>, <strong>Stocks</strong>
+    or <strong>Trades</strong> is read as one row per transaction; a <strong>Precious Metals</strong>
+    tab is read as side-by-side metal blocks with their own dates, weights, costs and premiums.
+    Re-uploading replaces whatever is staged — it doesn't touch your data.
+  </p>
+</div>
+
+{% if parse_error %}
+<div class="card">
+  <h2>Couldn't read that file</h2>
+  <p class="small" style="margin-bottom:0">{{ parse_error }}</p>
+</div>
+{% endif %}
+
+{% if parsed %}
+<div class="card">
+  <h2>2 · Where does each asset live now?</h2>
+  <p class="small muted" style="margin-top:-8px">Your sheet records where each trade was
+  <em>made</em>. If you later withdrew to cold storage, that isn't where the asset sits today —
+  and the app groups holdings by where they actually are. Set the destination once per ticker;
+  everything for that ticker lands there and its cost basis follows.</p>
+
+  <form method="get" action="/import">
+    <div class="grid g3">
+      {% for t in tickers %}
+      <div class="field">
+        <label>{{ t }}</label>
+        <input name="loc_{{ t }}" value="{{ mapping.get(t, '') }}" list="accountnames"
+               placeholder="account / location">
+      </div>
+      {% endfor %}
+      <div class="field">
+        <label>Date for undated rows</label>
+        <input type="date" name="undated" value="{{ undated }}">
+      </div>
+    </div>
+    <datalist id="accountnames">
+      {% for a in account_names %}<option value="{{ a }}"></option>{% endfor %}
+    </datalist>
+    <button class="ghost" type="submit">Update preview</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>3 · What this would do</h2>
+  <p class="small muted" style="margin-top:-8px">
+    Read {{ parsed.sheets|map(attribute='rows')|sum }} rows from
+    {% for s in parsed.sheets %}<strong>{{ s.name }}</strong> ({{ s.rows }}){{ ', ' if not loop.last }}{% endfor %}.
+    Quantity and cost basis below are run through the same FIFO the app uses, so this is what
+    you would actually end up holding.
+  </p>
+
+  <div class="table-scroll">
+    <table id="import-preview" data-paginate="10">
+      <thead>
+        <tr>
+          <th>Holding</th><th>Account</th><th class="num">Buys</th><th class="num">Sells</th>
+          <th class="num">Quantity</th><th class="num">vs sheet</th><th class="num">Cost basis</th>
+          <th class="num">Avg cost</th><th class="num">Realized</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for h in planned.holdings %}
+        <tr>
+          <td>{{ h.asset_name }} <span class="tag">{{ h.ticker }}</span></td>
+          <td class="muted small">{{ h.account or '— none —' }}</td>
+          <td class="num">{{ h.buy_count }}</td>
+          <td class="num">{{ h.sell_count }}</td>
+          <td class="num">{{ h.quantity|round(8)|num }}{% if h.unit %} <span class="hint">{{ h.unit }}</span>{% endif %}</td>
+          <td class="num">
+            {% if h.reconciles %}<span class="pos">match</span>
+            {% else %}
+              <span class="warnc">{{ '+' if h.sheet_diff > 0 }}{{ h.sheet_diff|round(8)|num }}</span>
+              <br><span class="hint">sheet says {{ h.sheet_net|round(8)|num }}</span>
+            {% endif %}
+          </td>
+          <td class="num">{{ h.cost_basis|round(2)|num }} <span class="hint">USD</span></td>
+          <td class="num">{{ '%.4f'|format(h.avg_cost) if h.avg_cost else '—' }}</td>
+          <td class="num {{ 'pos' if h.realized > 0 else ('neg' if h.realized < 0 else 'muted') }}">
+            {{ h.realized|round(2)|num }}
+          </td>
+          <td class="small">
+            {% if h.existing_id %}
+              <span class="muted">adds to existing holding</span>
+              {% if h.existing_lots %}
+                <br><span class="warnc">already has {{ h.existing_lots }} lot(s) — these would be
+                added on top, so roll back an earlier import first</span>
+              {% elif h.existing_quantity %}
+                <br><span class="warnc">typed quantity {{ h.existing_quantity|num }} will be
+                replaced by the ledger's {{ h.quantity|round(8)|num }}</span>
+              {% endif %}
+            {% else %}
+              <span class="pos">new holding</span>
+            {% endif %}
+            {% if h.zero_cost %}
+              <br><span class="warnc">{{ h.zero_cost }} row(s) had no cost — imported at zero
+              basis, so a later sale will overstate the gain</span>
+            {% endif %}
+            {% if h.premium_rows %}
+              <br><span class="muted">{{ h.premium_rows }} row(s) carry a dealer premium</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="10" class="muted">Nothing to import.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% set off = planned.holdings|rejectattr('reconciles')|list %}
+  {% if off %}
+  <p class="small warnc">{{ off|length }} holding(s) won't match your spreadsheet's own total,
+  because a row was skipped. Check the <em>vs sheet</em> column — the difference is exactly the
+  rows listed at the bottom of this page. Fix them in the sheet and re-import if you want the
+  app and the spreadsheet to agree.</p>
+  {% endif %}
+
+  {% if planned.zero_cost_total %}
+  <p class="small warnc">{{ planned.zero_cost_total }} row(s) across all holdings had no amount
+  recorded and come in at zero cost. That understates your basis — a future sale of those units
+  will read as pure gain. Fill the amounts into the sheet and re-import when you can.</p>
+  {% endif %}
+
+  <form method="post" action="/import/commit" style="margin-top:14px">
+    {% for t in tickers %}
+      <input type="hidden" name="loc_{{ t }}" value="{{ mapping.get(t, '') }}">
+    {% endfor %}
+    <input type="hidden" name="undated" value="{{ undated }}">
+    <input type="hidden" name="source" value="{{ staged_name or 'spreadsheet' }}">
+    <div class="grid g3">
+      <div class="field">
+        <label>Type IMPORT to write {{ planned.lot_total }} lots</label>
+        <input name="confirm" placeholder="IMPORT" autocomplete="off">
+      </div>
+    </div>
+    <button type="submit">Import {{ planned.lot_total }} lots</button>
+    <span class="small muted" style="margin-left:10px">Reversible in one click afterwards.</span>
+  </form>
+</div>
+
+{% if planned.held_back %}
+<div class="card">
+  <h2>Held back — {{ planned.held_back|length }} holding(s)</h2>
+  <p class="small muted" style="margin-top:-8px">These sell more than they buy, so a purchase is
+  missing from the sheet. Importing them would mean inventing a cost basis, which the app doesn't
+  do — add the missing buys and re-import, and they'll come in with everything else.</p>
+  <div class="table-scroll">
+    <table id="import-held" data-paginate="10">
+      <thead><tr><th>Holding</th><th>Account</th><th class="num">Buys</th><th class="num">Sells</th>
+      <th class="num">Rows</th><th>Why</th></tr></thead>
+      <tbody>
+      {% for h in planned.held_back %}
+        <tr>
+          <td>{{ h.asset_name }} <span class="tag">{{ h.ticker }}</span></td>
+          <td class="muted small">{{ h.account or '— none —' }}</td>
+          <td class="num">{{ h.buy_count }}</td>
+          <td class="num">{{ h.sell_count }}</td>
+          <td class="num muted">{{ h.lots|length }}</td>
+          <td class="small warnc">{{ h.reason }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if planned.skipped or parsed.problems %}
+<div class="card">
+  <h2>Rows needing attention — {{ planned.skipped|length + parsed.problems|length }}</h2>
+  <p class="small muted" style="margin-top:-8px">Every row that was changed or left out, with
+  where to find it in your spreadsheet.</p>
+  <div class="table-scroll">
+    <table id="import-problems" data-paginate="10">
+      <thead><tr><th>Sheet</th><th class="num">Row</th><th>What</th></tr></thead>
+      <tbody>
+      {% for s in planned.skipped %}
+        <tr>
+          <td class="muted small">{{ s.sheet }}</td>
+          <td class="num">{{ s.row }}</td>
+          <td class="small">{{ s.ticker }} {{ s.quantity|round(8)|num }} — <span class="warnc">skipped: {{ s.reason }}</span></td>
+        </tr>
+      {% endfor %}
+      {% for p in parsed.problems %}
+        <tr>
+          <td class="muted small">{{ p.sheet }}</td>
+          <td class="num">{{ p.row }}</td>
+          <td class="small muted">{{ p.message }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% if batches %}
+<div class="card">
+  <h2>Past imports</h2>
+  <p class="small muted" style="margin-top:-8px">Rolling one back removes the lots it wrote, and
+  any holdings it created that are still empty. Do this before re-importing an updated sheet, or
+  the same trades land twice.</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>When</th><th>File</th><th class="num">Lots</th><th class="num">Holdings</th>
+      <th>Destinations</th><th></th></tr></thead>
+      <tbody>
+      {% for b in batches %}
+        <tr>
+          <td>{{ b.imported_at[:10] }}</td>
+          <td class="small">{{ b.source or '—' }}</td>
+          <td class="num">{{ b.lot_count }}</td>
+          <td class="num">{{ b.item_count }}</td>
+          <td class="muted small">{{ b.note or '—' }}</td>
+          <td>
+            <div class="row-actions">
+              <form method="post" action="/import/batches/{{ b.id }}/rollback"
+                    onsubmit="return confirm('Roll back this import? {{ b.lot_count }} lots will be deleted.')">
+                <button class="danger tiny" type="submit">Roll back</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

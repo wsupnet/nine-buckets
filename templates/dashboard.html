@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<h1>Net worth</h1>
+<p class="sub">All values converted to USD.</p>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Net worth</div>
+    <div class="value big">{{ p.net_worth|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Total assets</div>
+    <div class="value pos">{{ p.assets|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Total liabilities</div>
+    <div class="value neg">{{ p.liabilities|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Largest drift</div>
+    {% set worst = p.buckets|rejectattr('excluded')|sort(attribute='drift_pct')|list %}
+    {% if worst %}
+      {% set w = (worst|first) if (worst|first).drift_pct|abs > (worst|last).drift_pct|abs else (worst|last) %}
+      <div class="value {{ 'warnc' if w.drift_pct|abs > 3 else '' }}">{{ w.drift_pct|round(1) }}%</div>
+      <div class="small muted">{{ w.name }}</div>
+    {% else %}<div class="value">—</div>{% endif %}
+  </div>
+</div>
+
+<script type="application/json" id="nw-series">{{ series|tojson }}</script>
+
+<div class="card">
+  <div data-chart="networth" data-source="nw-series" data-compact="1">
+    <div class="chart-head">
+      <h2 style="margin:0">Net worth over time</h2>
+      <a class="btn ghost tiny" href="/history">Full history →</a>
+    </div>
+    <div data-role="canvas"></div>
+    <div data-role="caption"></div>
+  </div>
+</div>
+
+{% if p.stale %}
+<div class="note">
+  {{ p.stale|length }} priced holding(s) have no price yet
+  ({{ p.stale|map(attribute='ticker')|join(', ') }}).
+  <a href="/items">Fetch prices →</a>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-head">
+    <h2>Allocation by bucket</h2>
+    <form method="post" action="/prices/refresh-all">
+      <button class="ghost tiny" type="submit">Refresh all prices &amp; FX</button>
+    </form>
+  </div>
+
+  <div class="stack">
+    {% for b in p.buckets if not b.excluded and b.value_usd > 0 %}
+      <i style="width: {{ b.actual_pct }}%; background: {{ colors.get(b.key, '#888') }}"
+         title="{{ b.name }} {{ b.actual_pct|round(1) }}%"></i>
+    {% endfor %}
+  </div>
+  <div class="legend">
+    {% for b in p.buckets if not b.excluded and b.value_usd > 0 %}
+      <span><i class="swatch" style="background: {{ colors.get(b.key, '#888') }}"></i>
+        {{ b.name }} {{ b.actual_pct|round(1) }}%</span>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>Bucket summary</h2>
+    <a class="btn ghost tiny" href="/allocation">Edit targets →</a>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr><th>Bucket</th><th class="num">Value</th><th class="num">Actual</th>
+      <th class="num">Target</th><th class="num">Drift</th></tr>
+    </thead>
+    <tbody>
+      {% for b in p.buckets %}
+      <tr>
+        <td>
+          <i class="swatch" style="background: {{ colors.get(b.key, '#888') }}; display:inline-block; margin-right:8px"></i>
+          <a class="plain" href="/buckets#bucket-{{ b.id }}">{{ b.name }}</a>
+          {% if b.excluded %}<span class="tag">not allocated</span>{% endif %}
+        </td>
+        <td class="num" data-bind="bucket-value-{{ b.id }}">{{ b.value_usd|money }}</td>
+        <td class="num" data-bind="bucket-actual-{{ b.id }}">{{ '—' if b.excluded else b.actual_pct|pct }}</td>
+        <td class="num muted">{{ '—' if b.excluded else b.target_pct|pct }}</td>
+        <td class="num {{ 'warnc' if not b.excluded and b.drift_pct|abs > 3 }}"
+            data-bind="bucket-drift-{{ b.id }}">
+          {{ '—' if b.excluded else (('+' if b.drift_pct > 0 else '') ~ b.drift_pct|round(1) ~ '%') }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('chart.js') }}"></script>
+{% endblock %}

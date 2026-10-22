@@ -1,0 +1,103 @@
+# Nine Buckets — net worth & allocation tracker
+#
+# The only compose file — deploy with:  docker compose up -d --build
+# On a NAS, point the Docker app's Project at this folder.
+#
+# BEFORE YOU START IT:
+#   1. Create .env next to this file (cp .env.example .env) and set APP_PASSWORD.
+#      Compose refuses to start without it, and the app refuses the placeholder.
+#   2. user: below — must match the owner of the data folder on the NAS
+#                    (see the `volumes:` section for where that folder lives).
+#
+# Secrets come from .env; everything else is inline. Some NAS project UIs do not
+# read .env reliably — if yours doesn't, deploy over SSH from this folder with
+#   docker compose up -d --build
+
+services:
+  networth:
+    build: .
+    image: networth-tracker:latest
+    container_name: networth
+    restart: unless-stopped
+
+    # The container writes to /data. A bind-mounted NAS folder keeps its own
+    # ownership, so the process must run as a uid that can write to it.
+    # NAS shared folders are usually owned by your admin user (often 1000:1000).
+    # Check with:  ls -ln /volume1/docker/networth-data
+    # then set this to that <uid>:<gid>. Avoid "0:0" (root) unless you have to.
+    user: "1000:1000"
+
+    environment:
+      # ---- Secrets, read from .env ---------------------------------------
+      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env}
+      # Optional. Empty = a random key is generated and kept in /data/.session_secret.
+      SECRET_KEY: ${SECRET_KEY:-}
+
+      # ---- Access --------------------------------------------------------
+      AUTH_ENABLED: "1"
+      SESSION_DAYS: "30"
+      # Set to 1 only if you put HTTPS in front of this.
+      SESSION_HTTPS_ONLY: "0"
+
+      # ---- Data ----------------------------------------------------------
+      DB_PATH: /data/networth.db
+      # Set TZ in .env (e.g. TZ=Europe/Berlin); UTC if unset.
+      TZ: ${TZ:-UTC}
+      # Keep 0. Set to 1 only if you want the sample portfolio to explore.
+      SEED_DEMO: "0"
+
+      # ---- Prices & FX ---------------------------------------------------
+      REFRESH_ENABLED: "1"
+      REFRESH_ON_START: "1"
+      REFRESH_INTERVAL_HOURS: "24"
+
+      # ---- Backups -------------------------------------------------------
+      BACKUP_ENABLED: "1"
+      BACKUP_INTERVAL_HOURS: "24"
+      BACKUP_RETENTION_DAYS: "30"
+      # Backups go OUTSIDE the project folder, so replacing this folder during an
+      # update can't take them with it. See the second volume mount below.
+      BACKUP_DIR: /backups
+
+      LOG_LEVEL: INFO
+
+    ports:
+      # Reachable from anything on your LAN at http://<nas-ip>:8000
+      # The passphrase is what protects it. To restrict it to the NAS itself
+      # (VPN/Tailscale only), change to "127.0.0.1:8000:8000".
+      - "8000:8000"
+
+    volumes:
+      # BOTH of these live OUTSIDE the project folder, on purpose. Updating by
+      # copying a fresh copy of the source over the project folder replaces
+      # everything inside it — so anything kept in there is deleted by an update.
+      # That is exactly how a database disappears mid-upgrade.
+      #
+      # Adjust the host paths to suit your NAS. If you are moving an existing
+      # deployment off ./data, copy the old folder across BEFORE starting:
+      #     sudo mkdir -p /volume1/docker/networth-data
+      #     sudo cp -a /volume1/docker/networth/data/. /volume1/docker/networth-data/
+      # The app starts on an empty database if you skip that.
+      #
+      # The live database and session secret.
+      - /volume1/docker/networth-data:/data
+      # Backups.
+      - /volume1/docker/networth-backups:/backups
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+    mem_limit: 512m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,23 @@
+.venv/
+.venv.*/
+__pycache__/
+*.pyc
+
+# Your data and secrets — never commit these.
+.env
+.env.*
+!.env.example
+data/
+!data/.gitkeep
+*.db
+*.db-*
+*.sqlite*
+backups/
+*.csv
+*.xlsx
+
+# Personal notes and local tooling.
+*.local.md
+*.local.env
+.claude/
+.DS_Store

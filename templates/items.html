@@ -1,0 +1,818 @@
+{% extends "base.html" %}
+{% block title %}Assets &amp; Liabilities{% endblock %}
+{% block content %}
+
+<h1>Assets &amp; liabilities</h1>
+<p class="sub">Values and buckets edit in place — click a field, type, then click away or press
+Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
+· <a href="/buckets">Grouped by bucket →</a></p>
+
+{% macro account_picker(selected_id, idp) %}
+  <div class="field">
+    <label>Account / location <span class="muted">(optional)</span></label>
+    <select name="account_id">
+      <option value="">— none —</option>
+      {% for a in accounts %}
+        <option value="{{ a.id }}" {{ 'selected' if selected_id == a.id }}>{{ a.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label>…or add a new account</label>
+    <input name="new_account" placeholder="e.g. Broker A">
+  </div>
+{% endmacro %}
+
+<div class="card">
+  <div class="card-head" style="margin-bottom:0">
+    <div class="btn-row">
+      <button type="button" data-toggle="addpanel" data-toggle-group="itemactions"
+              aria-expanded="false"
+              data-label-open="− Add an item" data-label-closed="+ Add an item">+ Add an item</button>
+      <button type="button" data-toggle="xferpanel" data-toggle-group="itemactions"
+              aria-expanded="false"
+              data-label-open="− Move money" data-label-closed="⇄ Move money">⇄ Move money</button>
+      <button type="button" data-toggle="holdpanel" data-toggle-group="itemactions"
+              aria-expanded="false"
+              data-label-open="− Move holdings" data-label-closed="⇄ Move holdings">⇄ Move holdings</button>
+    </div>
+    <div class="btn-row">
+      {% set moves = (transfers|length) + (holding_moves|length) %}
+      {% if moves %}
+      <button type="button" class="ghost" data-toggle="activity" data-toggle-group="itemactions"
+              aria-expanded="false"
+              data-label-open="− Recent activity" data-label-closed="Recent activity ({{ moves }})">Recent activity ({{ moves }})</button>
+      {% endif %}
+      <form method="post" action="/prices/refresh-all">
+        <button class="ghost tiny" type="submit">Refresh all prices &amp; FX</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="addpanel" hidden style="margin-top:18px">
+  <form method="post" action="/items" id="addform">
+    <div class="grid g3">
+      <div class="field">
+        <label>Name</label>
+        <input name="name" required placeholder="e.g. Global index ETF">
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select name="kind" id="kind">
+          <option value="cash">Cash / savings balance</option>
+          <option value="priced">Priced holding (ticker)</option>
+          <option value="property">Real estate (property + mortgage)</option>
+          <option value="manual">Manual value (collectible, business)</option>
+          <option value="liability">Liability (credit card, personal loan)</option>
+        </select>
+      </div>
+      <div class="field bucket-f">
+        <label>Bucket</label>
+        <select name="bucket_id">
+          <option value="">— none —</option>
+          {% for b in p.buckets %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field liability-f" hidden>
+        <label>Bucket</label>
+        <div class="hint" style="padding-top:9px">Liabilities aren't bucketed — they
+        reduce net worth only.</div>
+      </div>
+    </div>
+
+    <div class="grid g3">
+      {{ account_picker(none, 'add') }}
+      <div class="field">
+        <label>Currency</label>
+        <select name="currency">
+          {% for c in currencies %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field amount-f">
+        <label><span class="amount-label">Value</span>
+          <span class="muted">(in the currency above)</span></label>
+        <input name="amount" inputmode="decimal" placeholder="12345.67">
+      </div>
+      <div class="field property-f" hidden>
+        <label>Original loan amount <span class="muted">(optional)</span></label>
+        <input name="loan_original" inputmode="decimal" placeholder="234567">
+      </div>
+      <div class="field property-f" hidden>
+        <label>Current loan balance</label>
+        <input name="loan_balance" inputmode="decimal" placeholder="198765.43">
+      </div>
+      <div class="field priced-f" hidden>
+        <label>Asset class</label>
+        <select name="asset_class" id="asset_class">
+          <option value="stock">Stock / ETF (Yahoo)</option>
+          <option value="crypto">Crypto (CoinGecko)</option>
+          <option value="metal">Precious metal (spot price)</option>
+        </select>
+      </div>
+      <div class="field stock-f" hidden>
+        <label>Ticker</label>
+        <input name="ticker" placeholder="VT / BTC">
+      </div>
+      <div class="field metal-f" hidden>
+        <label>Metal</label>
+        <select name="ticker" disabled>
+          {% for code, m in metals.items() %}
+            <option value="{{ code }}">{{ m.name }} ({{ code }})</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field metal-f" hidden>
+        <label>Weight unit</label>
+        <select name="unit" disabled>
+          {% for key, label in units.items() %}
+            <option value="{{ key }}" {{ 'selected' if key == 'toz' }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="field priced-f" hidden>
+        <label><span class="qty-label">Quantity</span></label>
+        <input name="quantity" inputmode="decimal" placeholder="320">
+      </div>
+    </div>
+    <button type="submit">Add item</button>
+  </form>
+  </div>
+
+  <div id="xferpanel" hidden style="margin-top:18px">
+    <p class="small muted" style="margin-top:0">Move value between two manually-valued items —
+    bank → brokerage cash, cash → a manual asset, or cash → a liability to pay it down. Net
+    worth is unchanged; only where the money sits changes. To move <em>units</em> of a stock,
+    coin or metal between two places, use <em>Move holdings</em>. To record a
+    <em>purchase</em>, add a lot on the <a href="/holdings">Holdings</a> page — that moves the
+    cash for you.</p>
+
+    <form method="post" action="/transfers">
+      <div class="grid g3">
+        <div class="field">
+          <label>From</label>
+          <select name="from_item" required>
+            <option value="" disabled selected>Choose…</option>
+            {% for m in movable %}
+              <option value="{{ m.id }}">
+                {{ m.name }}{% if m.account_name %} · {{ m.account_name }}{% endif %}
+                ({{ m.amount|num or 0 }} {{ m.currency }}{{ ' · liability' if m.kind == 'liability' }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>To</label>
+          <select name="to_item" required>
+            <option value="" disabled selected>Choose…</option>
+            {% for m in movable %}
+              <option value="{{ m.id }}">
+                {{ m.name }}{% if m.account_name %} · {{ m.account_name }}{% endif %}
+                ({{ m.amount|num or 0 }} {{ m.currency }}{{ ' · liability' if m.kind == 'liability' }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>Amount <span class="muted">(in the "from" currency)</span></label>
+          <input name="amount" inputmode="decimal" required placeholder="6000">
+        </div>
+        <div class="field">
+          <label>Date <span class="muted">(optional)</span></label>
+          <input type="date" name="moved_on">
+        </div>
+        <div class="field">
+          <label>Note <span class="muted">(optional)</span></label>
+          <input name="note" placeholder="e.g. funded the brokerage">
+        </div>
+      </div>
+      <button type="submit">Move money</button>
+    </form>
+  </div>
+
+  <div id="holdpanel" hidden style="margin-top:18px">
+    <p class="small muted" style="margin-top:0">Move <em>units</em> of a holding from one place
+    to another — cold wallet → exchange, broker → broker, safe → vault. This is not a sale:
+    the quantity <strong>and its cost basis</strong> both move, so nothing is realized and the
+    units keep their original purchase dates for FIFO. Only the transfer fee reduces net worth.
+    Both sides must be the same ticker.</p>
+
+    {% if holdings|length < 1 %}
+      <p class="small muted">No priced holdings yet — add one first.</p>
+    {% else %}
+    <form method="post" action="/holding-transfers" id="holdform">
+      <div class="grid g3">
+        <div class="field">
+          <label>From</label>
+          <select name="from_item" id="hold_from" required>
+            <option value="" disabled selected>Choose…</option>
+            {% for h in holdings %}
+              <option value="{{ h.id }}" data-ticker="{{ (h.ticker or '')|upper }}"
+                      data-metal="{{ 1 if h.is_metal else 0 }}" data-unit="{{ h.unit or '' }}">
+                {{ h.name }}{% if h.account_name %} · {{ h.account_name }}{% endif %}
+                ({{ h.quantity|round(6)|num or 0 }}{% if h.is_metal %} {{ h.unit }}{% endif %}{{ ' · from lots' if h.has_lots }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>To</label>
+          <select name="to_item" id="hold_to" required>
+            <option value="" disabled selected>Choose…</option>
+            <option value="new">— a new holding —</option>
+            {% for h in holdings %}
+              <option value="{{ h.id }}" data-ticker="{{ (h.ticker or '')|upper }}">
+                {{ h.name }}{% if h.account_name %} · {{ h.account_name }}{% endif %}
+                ({{ h.quantity|round(6)|num or 0 }}{% if h.is_metal %} {{ h.unit }}{% endif %})
+              </option>
+            {% endfor %}
+          </select>
+          <div class="hint hold-same" hidden style="padding-top:6px">Only holdings with the same
+          ticker are listed.</div>
+        </div>
+        <div class="field">
+          <label><span class="hold-qty-label">Quantity</span> sent</label>
+          <input name="quantity" inputmode="decimal" required placeholder="100">
+        </div>
+        <div class="field hold-metal-f" hidden>
+          <label>Weight unit</label>
+          <select name="unit" disabled>
+            {% for key, label in units.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label><span class="hold-qty-label">Quantity</span> received
+            <span class="muted">(optional)</span></label>
+          <input name="received" inputmode="decimal" placeholder="blank if all of it arrived">
+          <div class="hint" style="padding-top:6px">Any shortfall is the network fee.</div>
+        </div>
+        <div class="field">
+          <label>Date <span class="muted">(optional)</span></label>
+          <input type="date" name="moved_on">
+        </div>
+        <div class="field">
+          <label>Note <span class="muted">(optional)</span></label>
+          <input name="note" placeholder="e.g. off-exchange to cold storage">
+        </div>
+      </div>
+
+      {# The wrapper carries `hidden`, not the grid itself: `.grid { display: grid }`
+         outranks the browser's [hidden] rule and the fields would stay on screen. #}
+      <div class="hold-new-f" hidden>
+      <div class="grid g3">
+        <div class="field">
+          <label>Name for the new holding <span class="muted">(optional)</span></label>
+          <input name="new_name" placeholder="defaults to the ticker">
+        </div>
+        <div class="field">
+          <label>Account / location</label>
+          <select name="new_account_id">
+            <option value="">— none —</option>
+            {% for a in accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label>…or add a new account</label>
+          <input name="new_account" placeholder="e.g. Exchange A">
+        </div>
+      </div>
+      </div>
+
+      <button type="submit">Move holdings</button>
+      <p class="small muted" style="margin:10px 0 0">A new holding inherits the source's ticker,
+      asset class, bucket and unit, and gets priced straight away. If the source has no purchase
+      lots, the quantity moves on its own and nothing is invented for the basis — the move is
+      logged saying so.</p>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if transfers or holding_moves %}
+  <div id="activity" hidden style="margin-top:18px">
+    {% if transfers %}
+    <div class="section-title" style="margin-top:0">Money moved</div>
+    <div class="table-scroll">
+      <table id="xfer-table" data-paginate="10">
+        <thead><tr><th>Date</th><th>From</th><th>To</th><th class="num">Amount</th>
+        <th>Note</th><th></th></tr></thead>
+        <tbody>
+        {% for t in transfers %}
+          <tr>
+            <td>{{ t.moved_on }}</td>
+            <td>{{ t.from_name or '(deleted)' }}</td>
+            <td>{{ t.to_name or '(deleted)' }}</td>
+            <td class="num">
+              {{ t.from_amount|round(2)|num }} <span class="hint">{{ t.from_ccy }}</span>
+              {% if t.from_ccy != t.to_ccy %}
+                <br><span class="hint">→ {{ t.to_amount|round(2)|num }} {{ t.to_ccy }}</span>
+              {% endif %}
+            </td>
+            <td class="muted small">{{ t.note or '—' }}</td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="/transfers/{{ t.id }}/delete"
+                      onsubmit="return confirm('Reverse this transfer? Both balances move back.')">
+                  <button class="danger tiny" type="submit">Reverse</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if holding_moves %}
+    <div class="section-title">Holdings moved</div>
+    <div class="table-scroll">
+      <table id="hold-move-table" data-paginate="10">
+        <thead><tr><th>Date</th><th>From</th><th>To</th><th class="num">Quantity</th>
+        <th class="num">Basis moved</th><th>Note</th><th></th></tr></thead>
+        <tbody>
+        {% for h in holding_moves %}
+          <tr>
+            <td>{{ h.moved_on }}</td>
+            <td>{{ h.from_name or '(deleted)' }}
+              {% if h.from_account %}<br><span class="hint">{{ h.from_account }}</span>{% endif %}</td>
+            <td>{{ h.to_name or '(deleted)' }}
+              {% if h.to_account %}<br><span class="hint">{{ h.to_account }}</span>{% endif %}</td>
+            <td class="num">
+              {{ h.qty_sent|round(6)|num }}{% if h.unit %} <span class="hint">{{ h.unit }}</span>{% endif %}
+              {% if h.qty_received < h.qty_sent %}
+                <br><span class="hint">→ {{ h.qty_received|round(6)|num }} arrived</span>
+              {% endif %}
+            </td>
+            <td class="num">
+              {% if h.basis_moved is not none %}
+                {{ h.basis_moved|round(2)|num }} <span class="hint">{{ h.currency }}</span>
+              {% else %}<span class="muted small">no lots</span>{% endif %}
+            </td>
+            <td class="muted small">{{ h.note or '—' }}</td>
+            <td>
+              <div class="row-actions">
+                <form method="post" action="/holding-transfers/{{ h.id }}/delete"
+                      onsubmit="return confirm('Reverse this move? The units and their basis go back to the source. If you have already sold some of them, the destination will show as oversold.')">
+                  <button class="danger tiny" type="submit">Reverse</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% macro edit_panel(i) %}
+<div class="edit-panel" id="edit-{{ i.id }}" hidden>
+    <div class="section-title" style="margin-top:0">Editing “{{ i.name }}”</div>
+    {# A property's loan only lives while it stays a property, so changing the type
+       away from it asks first — the server refuses without that confirmation. #}
+    <form method="post" action="/items/{{ i.id }}"
+          {% if i.kind == 'property' and (i.loan_balance or i.loan_original) %}
+          onsubmit="return confirmLoanDrop(this)"{% endif %}>
+      <input type="hidden" name="drop_loan" value="">
+      <div class="grid g3">
+        <div class="field">
+          <label>Name</label>
+          <input name="name" value="{{ i.name }}" required>
+        </div>
+        <div class="field">
+          <label>Type</label>
+          <select name="kind">
+            {% for k, lbl in [('cash','Cash / savings balance'), ('priced','Priced holding (ticker)'),
+                              ('property','Real estate (property + mortgage)'),
+                              ('manual','Manual value'), ('liability','Liability')] %}
+              <option value="{{ k }}" {{ 'selected' if i.kind == k }}>{{ lbl }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if i.kind == 'liability' %}
+        <div class="field">
+          <label>Bucket</label>
+          <div class="hint" style="padding-top:9px">Liabilities aren't bucketed — they
+          reduce net worth only.</div>
+        </div>
+        {% else %}
+        <div class="field">
+          <label>Bucket</label>
+          <select name="bucket_id">
+            <option value="">— none —</option>
+            {% for b in p.buckets %}
+              <option value="{{ b.id }}" {{ 'selected' if i.bucket_id == b.id }}>{{ b.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="grid g3">
+        {{ account_picker(i.account_id, i.id) }}
+        <div class="field">
+          <label>Currency</label>
+          <select name="currency">
+            {% for c in currencies %}
+              <option value="{{ c }}" {{ 'selected' if i.currency == c }}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if i.kind == 'priced' %}
+          {% if i.is_metal %}
+            <div class="field">
+              <label>Metal</label>
+              <select name="ticker">
+                {% for code, m in metals.items() %}
+                  <option value="{{ code }}" {{ 'selected' if i.ticker == code }}>{{ m.name }} ({{ code }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="field">
+              <label>Weight unit</label>
+              <select name="unit">
+                {% for key, label in units.items() %}
+                  <option value="{{ key }}" {{ 'selected' if (i.unit or 'toz') == key }}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          {% else %}
+            <div class="field">
+              <label>Ticker</label>
+              <input name="ticker" value="{{ i.ticker or '' }}">
+            </div>
+          {% endif %}
+          <div class="field">
+            <label>Asset class</label>
+            <select name="asset_class">
+              {% for k, lbl in [('stock','Stock / ETF (Yahoo)'), ('crypto','Crypto (CoinGecko)'),
+                                ('metal','Precious metal (spot price)')] %}
+                <option value="{{ k }}" {{ 'selected' if i.asset_class == k }}>{{ lbl }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label>{{ 'Weight' if i.is_metal else 'Quantity' }}
+              {% if i.is_metal %}<span class="muted">({{ i.unit_label }})</span>{% endif %}</label>
+            <input name="quantity" value="{{ i.quantity|num }}" inputmode="decimal"
+                   {{ 'readonly' if i.has_lots }}>
+          </div>
+        {% elif i.kind == 'property' %}
+          <div class="field">
+            <label>Current market value <span class="muted">(in the currency above)</span></label>
+            <input name="amount" value="{{ i.amount|num }}" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label>Original loan amount <span class="muted">(optional)</span></label>
+            <input name="loan_original" value="{{ i.loan_original|num }}" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label>Current loan balance</label>
+            <input name="loan_balance" value="{{ i.loan_balance|num }}" inputmode="decimal">
+          </div>
+        {% else %}
+          <div class="field">
+            <label>Value <span class="muted">(in the currency above)</span></label>
+            <input name="amount" value="{{ i.amount|num }}" inputmode="decimal">
+          </div>
+        {% endif %}
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+        <button type="submit">Save changes</button>
+        <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+        {% if i.kind == 'priced' %}
+          <label style="display:flex; gap:6px; align-items:center; margin:0">
+            <input type="checkbox" name="refetch" value="1" style="width:auto">
+            <span class="small muted">re-fetch price after saving</span>
+          </label>
+        {% endif %}
+      </div>
+      <p class="small muted" style="margin:10px 0 0">
+        Changing an item's type changes which fields apply — reopen the row after saving to
+        see the right ones. Changing a ticker clears the stale price automatically.
+      </p>
+    </form>
+</div>
+{% endmacro %}
+
+{% macro item_table(table_id, rows, show_price, show_bucket=true) %}
+{% set cols = (8 if show_price else 6) - (0 if show_bucket else 1) %}
+<div class="table-scroll">
+<table id="{{ table_id }}" data-sort-remember>
+  <thead>
+    <tr>
+      <th data-sort="text">Name</th>{% if show_bucket %}<th data-sort="text">Bucket</th>{% endif %}<th data-sort="text">Account</th>
+      {% if show_price %}<th class="num">Qty</th><th class="num">Price</th>{% endif %}
+      <th class="num">{{ 'Native' if show_price else 'Value' }}</th>
+      <th data-sort="num" class="num">USD</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for i in rows %}
+    <tr>
+      <td>{{ i.name }}{% if i.ticker %} <span class="tag">{{ i.ticker }}</span>{% endif %}</td>
+      {% if show_bucket %}
+      <td>
+        <select class="inline-edit" data-inline-url="/items/{{ i.id }}/inline"
+                data-inline-field="bucket_id" data-inline-label="Bucket"
+                aria-label="Bucket for {{ i.name }}">
+          <option value="">— unassigned —</option>
+          {% for b in p.buckets %}
+            <option value="{{ b.id }}" {{ 'selected' if i.bucket_id == b.id }}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </td>
+      {% endif %}
+      <td class="muted small">{{ i.account_name or '—' }}</td>
+      {% if show_price %}
+        <td class="num">
+          {% if i.has_lots %}
+            <input class="inline-edit num" readonly tabindex="-1"
+                   value="{{ i.effective_quantity|round(4)|num }}"
+                   title="From {{ i.name }}'s lot ledger — edit it on the Holdings page">
+          {% else %}
+            <input class="inline-edit num" inputmode="decimal"
+                   data-inline-url="/items/{{ i.id }}/inline" data-inline-field="quantity"
+                   data-inline-label="{{ 'Weight' if i.is_metal else 'Quantity' }}"
+                   aria-label="{{ 'Weight' if i.is_metal else 'Quantity' }} of {{ i.name }}"
+                   value="{{ i.quantity|num }}">
+          {% endif %}
+          {% if i.is_metal %}<span class="hint">{{ i.unit }}</span>{% endif %}
+        </td>
+        <td class="num">
+          {% if i.is_metal %}
+            {% if i.spot_per_unit %}{{ '%.2f'|format(i.spot_per_unit) }}
+              <span class="muted small">/{{ i.unit }}</span>
+            {% else %}<span class="muted">not fetched</span>{% endif %}
+          {% elif i.last_price %}{{ '%.2f'|format(i.last_price) }} <span class="muted small">{{ i.price_currency }}</span>
+          {% else %}<span class="muted">not fetched</span>{% endif %}
+        </td>
+      {% endif %}
+      {% if show_price %}
+        <td class="num muted">
+          <span data-bind="item-native-{{ i.id }}">{% if i.native_value is not none %}{{ '{:,.0f}'.format(i.native_value) }}{% else %}—{% endif %}</span>
+          {{ i.price_currency or '' }}
+        </td>
+      {% else %}
+        <td class="num">
+          <input class="inline-edit num" inputmode="decimal"
+                 data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
+                 data-inline-label="Value" aria-label="Value of {{ i.name }}"
+                 value="{{ i.amount|num }}">
+          <span class="hint">{{ i.currency }}</span>
+        </td>
+      {% endif %}
+      <td class="num" data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</td>
+      <td>
+        <div class="row-actions">
+          <div class="menu">
+            <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                    aria-label="Actions for {{ i.name }}">⋯</button>
+            <div class="menu-list" hidden>
+              <button type="button" onclick="openPanel('edit-{{ i.id }}')">Edit</button>
+              {% if i.kind == 'priced' %}
+              <form method="post" action="/items/{{ i.id }}/refresh">
+                <button type="submit">Fetch price</button>
+              </form>
+              {% endif %}
+              <div class="menu-sep"></div>
+              <form method="post" action="/items/{{ i.id }}/delete"
+                    onsubmit="return confirm('Delete {{ i.name }}?')">
+                <button class="danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+
+  {% else %}
+    <tr data-empty="1"><td colspan="{{ cols }}" class="muted">Nothing here yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% for i in rows %}{{ edit_panel(i) }}{% endfor %}
+{% endmacro %}
+
+{% set priced = p['items']|selectattr('kind','equalto','priced')|list %}
+{% set priced_closed = priced|selectattr('is_closed')|list %}
+<div class="card">
+  <h2>Priced holdings</h2>
+  {{ item_table('priced-table', priced|rejectattr('is_closed')|list, true) }}
+  {% if priced_closed %}
+  <p class="small muted" style="margin-bottom:0">
+    {{ priced_closed|length }} position{{ '' if priced_closed|length == 1 else 's' }} sold down to
+    zero {{ 'is' if priced_closed|length == 1 else 'are' }} hidden here — they're kept, with their
+    realized gain, under <a href="/holdings">Closed positions on Holdings</a>.
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Cash &amp; savings</h2>
+  {{ item_table('cash-table', p['items']|selectattr('kind','equalto','cash')|list, false) }}
+</div>
+
+<div class="card">
+  <h2>Real estate</h2>
+  <p class="small muted" style="margin-top:-8px">Equity is derived — current value minus what's
+  still owed — and that's what counts toward net worth and the Real Estate bucket. Keep the
+  mortgage here rather than as a separate liability, or the debt is counted twice.</p>
+  {% set props = p['items']|selectattr('kind','equalto','property')|list %}
+  <div class="table-scroll">
+  <table id="property-table" data-sort-remember>
+    <thead>
+      <tr><th data-sort="text">Property</th><th data-sort="text">Bucket</th><th class="num">Value</th>
+      <th class="num">Loan balance</th><th data-sort="num" class="num">Equity</th>
+      <th class="num">Paid off</th><th data-sort="num" class="num">USD</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for i in props %}
+      <tr>
+        <td>{{ i.name }}{% if i.account_name %} <span class="tag">{{ i.account_name }}</span>{% endif %}</td>
+        <td>
+          <select class="inline-edit" data-inline-url="/items/{{ i.id }}/inline"
+                  data-inline-field="bucket_id" data-inline-label="Bucket"
+                  aria-label="Bucket for {{ i.name }}">
+            <option value="">— unassigned —</option>
+            {% for b in p.buckets %}
+              <option value="{{ b.id }}" {{ 'selected' if i.bucket_id == b.id }}>{{ b.name }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td class="num">
+          <input class="inline-edit num" inputmode="decimal"
+                 data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
+                 data-inline-label="Value of {{ i.name }}" value="{{ i.amount|num }}">
+          <span class="hint">{{ i.currency }}</span>
+        </td>
+        <td class="num">
+          <input class="inline-edit num" inputmode="decimal"
+                 data-inline-url="/items/{{ i.id }}/inline" data-inline-field="loan_balance"
+                 data-inline-label="Loan balance for {{ i.name }}" value="{{ i.loan_balance|num }}">
+          <span class="hint">{{ i.currency }}</span>
+        </td>
+        <td class="num"><strong data-bind="item-equity-{{ i.id }}">{{ i.equity|num }}</strong>
+          {% if i.equity_pct is not none %}
+            <br><span class="hint">{{ i.equity_pct|round(0)|int }}% of value</span>
+          {% endif %}
+        </td>
+        <td class="num muted">
+          {% if i.paid_off_pct is not none %}
+            {{ i.paid_off_pct|round(0)|int }}%
+            <br><span class="hint">of {{ i.loan_original|num }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="num" data-bind="item-usd-{{ i.id }}">{{ i.value_usd|money }}</td>
+        <td>
+          <div class="row-actions">
+            <div class="menu">
+              <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                      aria-label="Actions for {{ i.name }}">⋯</button>
+              <div class="menu-list" hidden>
+                <button type="button" onclick="openPanel('edit-{{ i.id }}')">Edit</button>
+                <div class="menu-sep"></div>
+                <form method="post" action="/items/{{ i.id }}/delete"
+                      onsubmit="return confirm('Delete {{ i.name }}?')">
+                  <button class="danger" type="submit">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr data-empty="1"><td colspan="8" class="muted">No property yet — use
+        <em>+ Add an item</em> and pick <em>Real estate</em>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% for i in props %}{{ edit_panel(i) }}{% endfor %}
+</div>
+
+<div class="card">
+  <h2>Manual-value assets</h2>
+  {{ item_table('manual-table', p['items']|selectattr('kind','equalto','manual')|list, false) }}
+</div>
+
+<div class="card">
+  <h2>Liabilities</h2>
+  <p class="small muted" style="margin-top:-8px">Credit cards, personal loans and the like.
+  These reduce net worth and are deliberately kept out of the bucket system. A mortgage belongs
+  on its property above, not here.</p>
+  {{ item_table('liability-table', p['items']|selectattr('kind','equalto','liability')|list, false, false) }}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const kind = document.getElementById('kind');
+  const assetClass = document.getElementById('asset_class');
+
+  // Hidden fields must also be disabled: the metal picker and the ticker input
+  // share the name "ticker", so whichever is inactive must not be submitted.
+  function setGroup(sel, show) {
+    document.querySelectorAll('#addform ' + sel).forEach(e => {
+      e.hidden = !show;
+      e.querySelectorAll('input, select').forEach(f => { f.disabled = !show; });
+    });
+  }
+
+  function sync() {
+    const priced = kind.value === 'priced';
+    const property = kind.value === 'property';
+    const liability = kind.value === 'liability';
+    const metal = priced && assetClass.value === 'metal';
+    setGroup('.priced-f', priced);
+    setGroup('.amount-f', !priced);
+    setGroup('.stock-f', priced && !metal);
+    setGroup('.metal-f', metal);
+    setGroup('.property-f', property);
+    // Liabilities have no bucket; a property's bucket should stay pickable.
+    setGroup('.bucket-f', !liability);
+    setGroup('.liability-f', liability);
+    const qty = document.querySelector('#addform .qty-label');
+    if (qty) qty.textContent = metal ? 'Weight' : 'Quantity';
+    const amt = document.querySelector('#addform .amount-label');
+    if (amt) amt.textContent = property ? 'Current market value'
+                             : liability ? 'Amount owed' : 'Value';
+  }
+  kind.addEventListener('change', sync);
+  assetClass.addEventListener('change', sync);
+  sync();
+
+  // Edit panel: turning a property into anything else drops its mortgage figures,
+  // which changes net worth by the whole loan — say so before it happens.
+  function confirmLoanDrop(form) {
+    if (form.elements.kind.value === 'property') return true;
+    if (!confirm('Change this property\'s type? Its original loan and current loan ' +
+                 'balance will be deleted, and net worth will change by the loan.')) {
+      return false;
+    }
+    form.elements.drop_loan.value = '1';
+    return true;
+  }
+</script>
+
+<script>
+  // Move holdings: the destination has to be the same asset, so narrow the list to
+  // matching tickers rather than letting the server reject the pair afterwards.
+  (function () {
+    const form = document.getElementById('holdform');
+    if (!form) return;
+    const from = document.getElementById('hold_from');
+    const to = document.getElementById('hold_to');
+
+    function show(sel, on) {
+      form.querySelectorAll(sel).forEach(e => {
+        e.hidden = !on;
+        e.querySelectorAll('input, select').forEach(f => { f.disabled = !on; });
+      });
+    }
+
+    function syncFrom() {
+      const opt = from.selectedOptions[0];
+      const ticker = opt ? opt.dataset.ticker : '';
+      const metal = opt && opt.dataset.metal === '1';
+
+      let matches = 0;
+      Array.from(to.options).forEach(o => {
+        if (!o.value || o.value === 'new') return;
+        const ok = o.dataset.ticker === ticker && o.value !== from.value;
+        o.hidden = !ok;
+        o.disabled = !ok;
+        if (ok) matches++;
+      });
+      // A destination that no longer matches must not stay silently selected.
+      if (to.selectedOptions[0] && to.selectedOptions[0].disabled) to.value = '';
+      form.querySelectorAll('.hold-same').forEach(e => { e.hidden = !ticker || !matches; });
+
+      show('.hold-metal-f', metal);
+      if (metal && opt.dataset.unit) {
+        const u = form.querySelector('.hold-metal-f select');
+        if (u) u.value = opt.dataset.unit;
+      }
+      form.querySelectorAll('.hold-qty-label').forEach(e => {
+        e.textContent = metal ? 'Weight' : 'Quantity';
+      });
+    }
+
+    function syncTo() {
+      show('.hold-new-f', to.value === 'new');
+    }
+
+    from.addEventListener('change', function () { syncFrom(); syncTo(); });
+    to.addEventListener('change', syncTo);
+    syncFrom();
+    syncTo();
+  })();
+</script>
+{% endblock %}

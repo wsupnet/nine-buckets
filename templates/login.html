@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Nine Buckets</title>
+  <link rel="stylesheet" href="{{ asset('style.css') }}">
+</head>
+<body>
+<main class="wrap login-wrap">
+  <div class="card login-card">
+    <div class="brand" style="margin-bottom:6px">Nine <span>Buckets</span></div>
+    <p class="sub" style="margin-top:0">Enter the passphrase to continue.</p>
+
+    {% if error %}<div class="toast err" style="margin-bottom:16px">{{ error }}</div>{% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next or '/' }}">
+      <div class="field">
+        <label for="password">Passphrase</label>
+        <input id="password" name="password" type="password" autocomplete="current-password"
+               autofocus required>
+      </div>
+      <button type="submit" style="width:100%">Sign in</button>
+    </form>
+  </div>
+</main>
+</body>
+</html>
