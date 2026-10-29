@@ -1,17 +1,16 @@
+name: networth
+
 # Nine Buckets — net worth & allocation tracker
 #
-# The only compose file — deploy with:  docker compose up -d --build
+# The only compose file — deploy with:  git pull && docker compose up -d --build
 # On a NAS, point the Docker app's Project at this folder.
 #
 # BEFORE YOU START IT:
-#   1. Create .env next to this file (cp .env.example .env) and set APP_PASSWORD.
-#      Compose refuses to start without it, and the app refuses the placeholder.
+#   1. Create .env next to this file (cp .env.example .env), set APP_PASSWORD and
+#      APPDATA. Compose refuses to start without them, and the app refuses the
+#      placeholder password.
 #   2. user: below — must match the owner of the data folder on the NAS
 #                    (see the `volumes:` section for where that folder lives).
-#
-# Secrets come from .env; everything else is inline. Some NAS project UIs do not
-# read .env reliably — if yours doesn't, deploy over SSH from this folder with
-#   docker compose up -d --build
 
 services:
   networth:
@@ -23,7 +22,7 @@ services:
     # The container writes to /data. A bind-mounted NAS folder keeps its own
     # ownership, so the process must run as a uid that can write to it.
     # NAS shared folders are usually owned by your admin user (often 1000:1000).
-    # Check with:  ls -ln /volume1/docker/networth-data
+    # Check with:  ls -ln /volume1/docker/appdata/networth/data
     # then set this to that <uid>:<gid>. Avoid "0:0" (root) unless you have to.
     user: "1000:1000"
 
@@ -68,21 +67,18 @@ services:
       - "8000:8000"
 
     volumes:
-      # BOTH of these live OUTSIDE the project folder, on purpose. Updating by
-      # copying a fresh copy of the source over the project folder replaces
-      # everything inside it — so anything kept in there is deleted by an update.
-      # That is exactly how a database disappears mid-upgrade.
+      # BOTH of these live OUTSIDE the project folder, on purpose, under APPDATA
+      # from .env (NAS: APPDATA=/volume1/docker/appdata; local dev: ./dev-data).
+      # Compose refuses to start if APPDATA is unset rather than guessing a path.
       #
-      # Adjust the host paths to suit your NAS. If you are moving an existing
-      # deployment off ./data, copy the old folder across BEFORE starting:
-      #     sudo mkdir -p /volume1/docker/networth-data
-      #     sudo cp -a /volume1/docker/networth/data/. /volume1/docker/networth-data/
-      # The app starts on an empty database if you skip that.
+      # Create both folders, owned by the `user:` above, BEFORE the first start —
+      # Docker creates missing ones as root and the app then can't write to them.
+      # The app starts on an empty database if the data folder is empty.
       #
       # The live database and session secret.
-      - /volume1/docker/networth-data:/data
+      - ${APPDATA:?APPDATA is not set}/networth/data:/data
       # Backups.
-      - /volume1/docker/networth-backups:/backups
+      - ${APPDATA:?APPDATA is not set}/networth/backups:/backups
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]

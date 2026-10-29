@@ -1,5 +1,10 @@
 .venv/
+# App data never belongs in the build context.
 data/
+dev-data/
+backups/
+*.db
+*.db-*
 # Bare "__pycache__/" only matches the top level; ** catches nested ones.
 **/__pycache__/
 **/*.pyc

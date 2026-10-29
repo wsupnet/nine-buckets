@@ -10,6 +10,7 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from . import config, prices
 from .db import DB_PATH, connect, now_iso
@@ -103,6 +104,32 @@ def backup_dir():
     return config.BACKUP_DIR or os.path.join(os.path.dirname(DB_PATH) or ".", "backups")
 
 
+# What SQLite can leave beside a database file. Backups taken before VACUUM INTO
+# copied the live database's WAL flag, so every later open of one grew -wal/-shm.
+SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def remove_sidecars(path):
+    for suffix in SIDECARS:
+        try:
+            os.remove(path + suffix)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning("could not remove %s%s", os.path.basename(path), suffix)
+
+
+def open_readonly(path):
+    """Open a backup or staged upload without writing anything beside it.
+
+    mode=ro alone still creates -wal/-shm for a WAL-mode file, and they outlive the
+    connection — which is how listing the backups on every History page load
+    littered the folder. immutable=1 tells SQLite nothing else is writing the file,
+    so it takes no locks and needs no sidecars. Never use it on the live database.
+    """
+    return sqlite3.connect(f"file:{quote(path)}?mode=ro&immutable=1", uri=True)
+
+
 def count_items(path):
     """How many items a backup file holds, or None if it can't be read.
 
@@ -112,7 +139,7 @@ def count_items(path):
     snapshot of nothing.
     """
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con = open_readonly(path)
         try:
             return con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
         finally:
@@ -168,7 +195,7 @@ UPLOAD_NAME = "uploaded-restore"
 
 def inspect_db(path):
     """Summarise a candidate .db so you can confirm it's the right file first."""
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    con = open_readonly(path)
     con.row_factory = sqlite3.Row
     try:
         if con.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
@@ -259,7 +286,8 @@ def restore_backup(name):
     """Replace the live database with a backup, after saving what's there now.
 
     Uses SQLite's backup API rather than a file copy, so it is safe while the app
-    is serving and doesn't leave stale WAL files behind.
+    is serving and doesn't leave stale WAL files behind. The backup itself is only
+    read, and opened immutable so restoring it doesn't grow sidecars beside it.
     """
     src_path = resolve_backup(name)
     if not src_path:
@@ -267,7 +295,7 @@ def restore_backup(name):
 
     safety = backup_database(label="pre-restore")
 
-    src = sqlite3.connect(src_path)
+    src = open_readonly(src_path)
     dst = sqlite3.connect(DB_PATH, timeout=15)
     try:
         # Sanity-check the file before letting it overwrite live data.
@@ -295,10 +323,12 @@ def upgrade_restored():
 
 
 def backup_database(label=None, skip_if_empty=False):
-    """Consistent online copy via SQLite's backup API.
+    """Consistent online copy via VACUUM INTO.
 
     Copying the file with `cp` while the app is writing can capture a torn database;
-    the backup API takes a proper snapshot even under concurrent writes.
+    VACUUM INTO takes a proper snapshot even under concurrent writes. Unlike the
+    backup API it writes the copy in rollback-journal mode, so the result is one
+    self-contained file and opening it later never creates -wal/-shm beside it.
 
     `skip_if_empty` guards the automatic runs. If the live database has no items —
     which is what you are looking at after the data volume goes missing during an
@@ -335,14 +365,36 @@ def backup_database(label=None, skip_if_empty=False):
         stamp += "-" + datetime.now(timezone.utc).strftime("%H%M%S") + "-" + label
     dest = os.path.join(dest_dir, f"{BACKUP_PREFIX}{stamp}.db")
 
-    src = sqlite3.connect(DB_PATH)
-    dst = sqlite3.connect(dest)
+    # Written under a name the listing ignores, then renamed into place: a
+    # half-written file never shows up as a backup, and a second run on the same
+    # day replaces the earlier copy whole (VACUUM INTO refuses an existing file).
+    tmp = os.path.join(dest_dir, f".{os.path.basename(dest)}.tmp")
     try:
-        with dst:
-            src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        src = sqlite3.connect(DB_PATH, timeout=15)
+        try:
+            src.execute("VACUUM INTO ?", (tmp,))
+        finally:
+            src.close()
+        # VACUUM INTO already writes rollback mode on current SQLite; say so
+        # explicitly so an older library can't hand back a WAL-mode copy.
+        out = sqlite3.connect(tmp)
+        try:
+            out.execute("PRAGMA journal_mode = DELETE")
+        finally:
+            out.close()
+        # SQLite doesn't fsync the VACUUM INTO output itself.
+        with open(tmp, "rb") as fh:
+            os.fsync(fh.fileno())
+        # Sidecars left by an older copy of the same name must go first: a stale
+        # -journal beside the new file would be "rolled back" into it.
+        remove_sidecars(dest)
+        os.replace(tmp, dest)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
     pruned = prune_backups(dest_dir)
     size = os.path.getsize(dest)
@@ -356,12 +408,13 @@ def prune_backups(dest_dir=None):
     cutoff = time.time() - config.BACKUP_RETENTION_DAYS * 86400
     removed = 0
     for name in os.listdir(dest_dir):
-        if not (name.startswith("networth-") and name.endswith(".db")):
+        if not (name.startswith(BACKUP_PREFIX) and name.endswith(".db")):
             continue
         path = os.path.join(dest_dir, name)
         try:
             if os.path.getmtime(path) < cutoff:
                 os.remove(path)
+                remove_sidecars(path)
                 removed += 1
         except OSError:
             log.warning("could not prune backup %s", name)

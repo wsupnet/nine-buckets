@@ -1661,13 +1661,9 @@ def delete_backup(name: str = Form(...)):
         return RedirectResponse(
             "/history?err=" + quote_plus(f"Could not delete {name}: {exc}"), 303)
 
-    # SQLite leaves -wal and -shm beside the file it wrote; without this they pile up
-    # as orphans that nothing lists and nothing ever cleans.
-    for sidecar in (path + "-wal", path + "-shm"):
-        try:
-            os.remove(sidecar)
-        except OSError:
-            pass
+    # Older backups can have -wal/-shm beside them; without this they pile up as
+    # orphans that nothing lists and nothing ever cleans.
+    jobs.remove_sidecars(path)
 
     msg = f"Deleted {name}"
     if not remaining:

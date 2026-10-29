@@ -8,13 +8,22 @@ __pycache__/
 .env.*
 !.env.example
 data/
-!data/.gitkeep
+dev-data/
+backups/
 *.db
 *.db-*
 *.sqlite*
-backups/
+*-wal
+*-shm
+*-journal
+*.tmp
+*.part
+.session_secret
+.write-probe
+*.log
 *.csv
 *.xlsx
+*.xlsm
 
 # Personal notes and local tooling.
 *.local.md

@@ -185,17 +185,19 @@ Refresh runs **daily in-process** plus on startup. No cron container.
 is an easy way to start the app without its configuration.
 
 ```bash
-cp .env.example .env          # set APP_PASSWORD
+cp .env.example .env          # set APP_PASSWORD and APPDATA
 cd /path/to/networth && docker compose up -d --build
 ```
 
-The compose file bind-mounts two host folders that live **outside** the project folder, so
-replacing the project folder during an update can't delete them:
+The compose file bind-mounts two host folders under `APPDATA` (from `.env`) that live
+**outside** the repo, so nothing an update does to the code can delete them:
 
 ```
-/path/to/networth-data     -> /data      live database + session secret
-/path/to/networth-backups  -> /backups   nightly backups
+$APPDATA/networth/data     -> /data      live database + session secret
+$APPDATA/networth/backups  -> /backups   nightly backups
 ```
+
+On the NAS `APPDATA=/volume1/docker/appdata`; locally `./dev-data` (git-ignored).
 
 `user:` in the compose file must match the owner of those folders.
 

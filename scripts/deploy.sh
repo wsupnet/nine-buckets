@@ -45,7 +45,7 @@ fi
 
 EXCLUDES=(
   .env ".env.*"
-  data/ backups/ backup/
+  data/ dev-data/ backups/ backup/
   .git/ ".venv*/" node_modules/ __pycache__/
   .claude/ .DS_Store
   "*.local.md" "*.local.env"

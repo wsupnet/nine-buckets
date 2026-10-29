@@ -39,17 +39,24 @@ lookups; there are no bank integrations and nothing is sent to a third-party clo
 
 You need **Docker** with Compose. Run everything from the project folder.
 
-**1. Create `.env`** and set a passphrase (min. 8 characters; the placeholder is refused):
+**1. Create `.env`**, set a passphrase (min. 8 characters; the placeholder is refused) and
+`APPDATA`, the parent folder for the app's data:
 
 ```bash
 cp .env.example .env
 openssl rand -base64 24      # paste the output into APP_PASSWORD in .env
 ```
 
-**2. Check the two host folders** in `docker-compose.yml` under `volumes:`. They hold the live
-database and the backups, and must live **outside** the project folder (see
-[§5](#5-data-storage-backups-and-restore)). On a NAS with `/volume1` shares the defaults are fine; elsewhere,
-point them at folders you create.
+**2. Create the two data folders.** Compose mounts `$APPDATA/networth/data` at `/data` (the
+live database) and `$APPDATA/networth/backups` at `/backups`, and refuses to start if `APPDATA`
+is unset. They live **outside** the project folder (see
+[§5](#5-data-storage-backups-and-restore)). On the NAS `APPDATA=/volume1/docker/appdata`; the
+`.env.example` value `./dev-data` is for running it locally and is git-ignored. Create both
+folders, owned by the compose file's `user:`, before the first start:
+
+```bash
+mkdir -p "$APPDATA/networth/data" "$APPDATA/networth/backups"
+```
 
 **3. Start it:**
 
@@ -59,7 +66,7 @@ docker compose up -d --build
 
 Open `http://<host>:8000` and sign in with the passphrase. On a NAS, follow
 [DEPLOY-NAS.md](../DEPLOY-NAS.md), which also covers folder ownership (`user:`), deploying
-with `scripts/deploy.sh`, and safe updates.
+with `git pull`, and safe updates.
 
 ### Network exposure
 
@@ -91,14 +98,15 @@ The app doesn't load `.env` on its own outside Docker; export it first with
 
 ## 3. Configuration reference
 
-`APP_PASSWORD`, `SECRET_KEY` and `TZ` are read from `.env`. Everything else is set inline under
+`APP_PASSWORD`, `APPDATA`, `SECRET_KEY` and `TZ` are read from `.env`. Everything else is set inline under
 `environment:` in `docker-compose.yml`.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `APP_PASSWORD` | *(required, `.env`)* | Sign-in passphrase, min. 8 characters. Compose refuses to start without it. |
+| `APPDATA` | *(required, `.env`)* | Compose only, not read by the app. Parent of the `networth/data` and `networth/backups` folders mounted at `/data` and `/backups`. NAS: `/volume1/docker/appdata`; local: `./dev-data`. |
 | `SECRET_KEY` | *(generated, `.env`)* | Session-signing key. Empty = generated once and stored next to the database. |
-| `TZ` | `UTC` (`.env`) | Container timezone; sets backup filenames and log times. |
+| `TZ` | `UTC` (`.env`) | Container timezone; sets log times. Backup filenames are always UTC. |
 | `AUTH_ENABLED` | `1` | `0` runs with no login at all. Only for a network you fully trust. |
 | `SESSION_DAYS` | `30` | How long a sign-in lasts. |
 | `SESSION_HTTPS_ONLY` | `0` | `1` stops the session cookie being sent over plain HTTP. Use it behind HTTPS. |
@@ -138,14 +146,17 @@ The published port is the `ports:` mapping in `docker-compose.yml`, not a variab
 |---|---|---|
 | Live database | `DB_PATH` (`/data/networth.db`) | SQLite in WAL mode |
 | Session secret | `/data/.session_secret` | Only when `SECRET_KEY` is empty |
-| Backups | `BACKUP_DIR` (`/backups`) | `networth-YYYY-MM-DD.db`, plus `-manual` and `-pre-restore` copies |
+| Backups | `BACKUP_DIR` (`/backups`) | `networth-YYYY-MM-DD.db`, plus `-manual` and `-pre-restore` copies; also staged uploads waiting for confirmation |
 
 Both `/data` and `/backups` are bind-mounted from folders **outside** the project folder, so
 replacing the project folder during an update can't delete either. A database or backup kept
 inside the folder you replace is lost in exactly the situation you most need it.
 
-**Automatic backups** run at startup and every `BACKUP_INTERVAL_HOURS`, using SQLite's backup API
-(safe while the app is writing), and are pruned after `BACKUP_RETENTION_DAYS`. A backup is
+**Automatic backups** run at startup and every `BACKUP_INTERVAL_HOURS`, using SQLite's
+`VACUUM INTO` (safe while the app is writing), and are pruned after `BACKUP_RETENTION_DAYS`
+together with any `-wal`/`-shm`/`-journal` files beside them. Each backup is one self-contained
+file in rollback-journal mode, and the app only ever opens backups read-only and immutable
+(listing, item counts, the upload preview, restore), so nothing is created beside them. A backup is
 **skipped** while the database has no items, and the log says so loudly. Otherwise a data volume
 that failed to mount would be snapshotted as an empty file and become your "latest" backup. Every
 backup is listed with its **item count** for the same reason.
@@ -163,9 +174,14 @@ backup is listed with its **item count** for the same reason.
 
 **From the command line**, if the app won't start:
 
+With `APPDATA` set in your shell to the same value as in `.env`. Keep the current database aside
+and remove its `-wal`/`-shm` first, or a leftover WAL is replayed on top of the restored file:
+
 ```bash
 docker compose down
-cp /path/to/backups/networth-YYYY-MM-DD.db /path/to/data/networth.db
+cp -a "$APPDATA/networth/data/networth.db" "$APPDATA/networth/data/networth.db.before-restore"
+rm -f "$APPDATA/networth/data/networth.db-wal" "$APPDATA/networth/data/networth.db-shm"
+cp "$APPDATA/networth/backups/networth-YYYY-MM-DD.db" "$APPDATA/networth/data/networth.db"
 docker compose up -d
 ```
 

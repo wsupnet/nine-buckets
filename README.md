@@ -72,7 +72,7 @@ browser.
 |---|---|---|
 | [User guide](docs/USER-GUIDE.md) | Everyone | How to use the app in plain language: first-time setup, the monthly routine, how-tos, what the numbers mean, backups, common questions |
 | [Technical documentation](docs/DOCUMENTATION.md) | Whoever runs the app | Installation, every setting, security, backups and restore, how values and gains are calculated, import format, troubleshooting, known limitations |
-| [Install on a NAS](DEPLOY-NAS.md) | Whoever runs the app | Step by step NAS setup, safe updates with `scripts/deploy.sh`, NAS troubleshooting |
+| [Install on a NAS](DEPLOY-NAS.md) | Whoever runs the app | Step by step NAS setup, data folders outside the repo, safe updates with `git pull`, NAS troubleshooting |
 | [Architecture](ARCHITECTURE.md) | Developers | The code's structure and the design decisions that shouldn't be reversed |
 | [Demo video](docs/demo/networth-demo.mp4) | Everyone | A 2-minute walkthrough of the main features, with made-up data |
 | [How the demo video is made](scripts/demo/README.md) | Developers | The Docker-based recording pipeline, with fictional data |
