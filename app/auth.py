@@ -82,6 +82,77 @@ def check_password(candidate: str) -> bool:
     return hmac.compare_digest(candidate or "", config.APP_PASSWORD)
 
 
+# No 0/O, 1/l/I: it gets read off a log and typed on a phone.
+PASSPHRASE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+def _data_file(name):
+    return os.path.join(os.path.dirname(DB_PATH) or ".", name)
+
+
+def _host_hint(name):
+    """Where the file is on the host, when compose tells us the folder."""
+    host_dir = os.environ.get("NETWORTH_DATA", "").strip()
+    return f"{host_dir.rstrip('/')}/{name}" if host_dir else _data_file(name)
+
+
+def ensure_password():
+    """Use APP_PASSWORD if set; otherwise the generated one, creating it once.
+
+    Generated rather than refused so a first `docker compose up` works with no
+    .env at all, without ever serving the app unprotected. It is written to the
+    data folder (owner-only) and printed in the log only when it is created.
+    """
+    if not config.AUTH_ENABLED:
+        return
+    path = _data_file(".app_password")
+    if config.APP_PASSWORD:
+        if os.path.exists(path):
+            log.info("Using APP_PASSWORD from the environment; %s is ignored.",
+                     _host_hint(".app_password"))
+        return
+
+    try:
+        with open(path) as fh:
+            stored = fh.read().strip()
+    except FileNotFoundError:
+        stored = ""
+    if stored:
+        config.APP_PASSWORD = stored
+        log.info(
+            "APP_PASSWORD is not set, so the generated passphrase in %s is in use.\n"
+            "  To see it, open that file, or run:  docker compose exec networth cat %s\n"
+            "  To choose your own, set APP_PASSWORD in .env and restart.",
+            _host_hint(".app_password"), path,
+        )
+        return
+
+    phrase = "-".join(
+        "".join(secrets.choice(PASSPHRASE_ALPHABET) for _ in range(4)) for _ in range(4)
+    )
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(phrase + "\n")
+    except OSError as exc:
+        # A passphrase that changed on every restart would lock everyone out, so
+        # refuse to start instead. check_writable() normally catches this first.
+        raise RuntimeError(
+            f"Could not save the generated passphrase to {path}: {exc}\n"
+            "  Make the data folder writable, or set APP_PASSWORD in .env."
+        ) from exc
+    config.APP_PASSWORD = phrase
+    log.warning(
+        "=" * 72 + "\n"
+        "  No APP_PASSWORD was set, so one was generated. Sign in with:\n\n"
+        "      %s\n\n"
+        "  It is saved in %s and stays the same across restarts.\n"
+        "  This is the only time it is printed. To choose your own instead, set\n"
+        "  APP_PASSWORD in .env and restart.\n" + "=" * 72,
+        phrase, _host_hint(".app_password"),
+    )
+
+
 def session_secret() -> str:
     """Stable across restarts, so a redeploy doesn't sign everyone out."""
     if config.SECRET_KEY:

@@ -33,36 +33,37 @@ For the design decisions behind the code, read [ARCHITECTURE.md](../ARCHITECTURE
 
 FastAPI + Jinja2 templates + SQLite, served by uvicorn, in a single Docker container. No frontend
 build step and no CDN assets. The only outbound requests the app makes are price and exchange-rate
-lookups; there are no bank integrations and nothing is sent to a third-party cloud.
+lookups; there are no bank integrations and none of your balances leave the host. The price
+sources do see the host's IP address and the symbols looked up. They are free public endpoints
+(Yahoo's is unofficial), so treat automatic prices as best-effort.
 
 ## 2. Install and run
 
 You need **Docker** with Compose. Run everything from the project folder.
 
-**1. Create `.env`**, set a passphrase (min. 8 characters; the placeholder is refused) and
-`APPDATA`, the parent folder for the app's data:
-
-```bash
-cp .env.example .env
-openssl rand -base64 24      # paste the output into APP_PASSWORD in .env
-```
-
-**2. Create the two data folders.** Compose mounts `$APPDATA/networth/data` at `/data` (the
-live database) and `$APPDATA/networth/backups` at `/backups`, and refuses to start if `APPDATA`
-is unset. They live **outside** the project folder (see
-[§5](#5-data-storage-backups-and-restore)). On the NAS `APPDATA=/volume1/docker/appdata`; the
-`.env.example` value `./dev-data` is for running it locally and is git-ignored. Create both
-folders, owned by the compose file's `user:`, before the first start:
-
-```bash
-mkdir -p "$APPDATA/networth/data" "$APPDATA/networth/backups"
-```
-
-**3. Start it:**
+From the project folder:
 
 ```bash
 docker compose up -d --build
 ```
+
+That's all: no `.env` is needed. On first start the app generates a sign-in passphrase and
+prints it once in the log. Read it with:
+
+```bash
+docker compose logs networth
+```
+
+It's saved in the data folder as `.app_password`, so it stays the same across restarts. To pick
+your own passphrase (at least 8 characters) or move the data folder, copy `.env.example` to
+`.env` (in a file manager, or `cp .env.example .env`; in PowerShell
+`Copy-Item .env.example .env`), edit it and run the command again.
+
+All your data goes in **one folder**: `data` next to `docker-compose.yml`, unless `.env` sets
+`NETWORTH_DATA` (see [§5](#5-data-storage-backups-and-restore)). On Linux, that folder must be
+owned by the uid in the compose file's `user:` (`1000:1000`). A `git clone` run as that user
+already creates it with the right owner; check with `ls -ln`. Docker Desktop on Windows and Mac
+doesn't care who owns it.
 
 Open `http://<host>:8000` and sign in with the passphrase. On a NAS, follow
 [DEPLOY-NAS.md](../DEPLOY-NAS.md), which also covers folder ownership (`user:`), deploying
@@ -98,13 +99,13 @@ The app doesn't load `.env` on its own outside Docker; export it first with
 
 ## 3. Configuration reference
 
-`APP_PASSWORD`, `APPDATA`, `SECRET_KEY` and `TZ` are read from `.env`. Everything else is set inline under
+`APP_PASSWORD`, `NETWORTH_DATA`, `SECRET_KEY` and `TZ` are read from `.env`. Everything else is set inline under
 `environment:` in `docker-compose.yml`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `APP_PASSWORD` | *(required, `.env`)* | Sign-in passphrase, min. 8 characters. Compose refuses to start without it. |
-| `APPDATA` | *(required, `.env`)* | Compose only, not read by the app. Parent of the `networth/data` and `networth/backups` folders mounted at `/data` and `/backups`. NAS: `/volume1/docker/appdata`; local: `./dev-data`. |
+| `APP_PASSWORD` | *(generated, `.env`)* | Sign-in passphrase, min. 8 characters; a placeholder is refused. Empty = generated on first start, printed once in the log, and kept in the data folder as `.app_password`. A value set here always wins over the generated one. |
+| `NETWORTH_DATA` | `./data` (`.env`) | The host folder mounted at `/data`: database, session secret and `backups/`. On a NAS, put it outside the project folder. (Not `APPDATA`: Windows already defines that name.) |
 | `SECRET_KEY` | *(generated, `.env`)* | Session-signing key. Empty = generated once and stored next to the database. |
 | `TZ` | `UTC` (`.env`) | Container timezone; sets log times. Backup filenames are always UTC. |
 | `AUTH_ENABLED` | `1` | `0` runs with no login at all. Only for a network you fully trust. |
@@ -118,7 +119,7 @@ The app doesn't load `.env` on its own outside Docker; export it first with
 | `BACKUP_ENABLED` | `1` | Scheduled backups. |
 | `BACKUP_INTERVAL_HOURS` | `24` | Backup cadence. |
 | `BACKUP_RETENTION_DAYS` | `30` | Days of backups to keep. |
-| `BACKUP_DIR` | `/backups` | Where backups are written. Mount it outside the project folder. |
+| `BACKUP_DIR` | `/data/backups` | Where backups are written. Leave unset to keep them in the data folder. |
 | `LOG_LEVEL` | `INFO` | Python log level. |
 
 The published port is the `ports:` mapping in `docker-compose.yml`, not a variable.
@@ -132,7 +133,11 @@ The published port is the `ports:` mapping in `docker-compose.yml`, not a variab
   behind Docker's port mapping, every client may appear as the same gateway address.
   `X-Forwarded-For` is never trusted (uvicorn runs with `--no-proxy-headers`), and the throttle is
   in memory, so a restart clears it.
-- **Fails closed:** the app refuses to start with a missing, short or placeholder passphrase.
+- **Never runs open by accident:** with no passphrase set it generates one (16 characters, about
+  80 bits) rather than serving without a login. It's stored owner-only in the data folder and
+  appears in the log once, so anyone who can read `docker compose logs` can see it; they can
+  read the database too. A short or placeholder passphrase that you set stops the app from
+  starting.
 - **Container user:** the image defines a non-root user (uid 10001), and `docker-compose.yml`
   overrides it with `user: "1000:1000"`, a common owner of NAS shared folders. Set `user:` to
   whoever owns the data and backup folders (see [DEPLOY-NAS.md](../DEPLOY-NAS.md)).
@@ -146,18 +151,24 @@ The published port is the `ports:` mapping in `docker-compose.yml`, not a variab
 |---|---|---|
 | Live database | `DB_PATH` (`/data/networth.db`) | SQLite in WAL mode |
 | Session secret | `/data/.session_secret` | Only when `SECRET_KEY` is empty |
-| Backups | `BACKUP_DIR` (`/backups`) | `networth-YYYY-MM-DD.db`, plus `-manual` and `-pre-restore` copies; also staged uploads waiting for confirmation |
+| Generated passphrase | `/data/.app_password` | Only when `APP_PASSWORD` is empty |
+| Backups | `/data/backups` | `networth-YYYY-MM-DD.db`, plus `-manual` and `-pre-restore` copies; also staged uploads waiting for confirmation |
 
-Both `/data` and `/backups` are bind-mounted from folders **outside** the project folder, so
-replacing the project folder during an update can't delete either. A database or backup kept
-inside the folder you replace is lost in exactly the situation you most need it.
+All three live in **one host folder**, mounted at `/data`: `./data` next to
+`docker-compose.yml` by default, or `NETWORTH_DATA` from `.env`. The startup log names the
+folder and how many items the database holds, and warns if it created a new, empty database
+or if `/data` isn't mounted at all.
+
+`git pull` never touches `./data` (it's git-ignored), but **`git clean -x` deletes it**, and so
+does anything that replaces the whole project folder, such as some NAS Docker apps when
+updating. If yours does that, set `NETWORTH_DATA` to a folder outside the project.
 
 **Automatic backups** run at startup and every `BACKUP_INTERVAL_HOURS`, using SQLite's
 `VACUUM INTO` (safe while the app is writing), and are pruned after `BACKUP_RETENTION_DAYS`
 together with any `-wal`/`-shm`/`-journal` files beside them. Each backup is one self-contained
 file in rollback-journal mode, and the app only ever opens backups read-only and immutable
 (listing, item counts, the upload preview, restore), so nothing is created beside them. A backup is
-**skipped** while the database has no items, and the log says so loudly. Otherwise a data volume
+**skipped** while the database has no items, and the log says so. Otherwise a data volume
 that failed to mount would be snapshotted as an empty file and become your "latest" backup. Every
 backup is listed with its **item count** for the same reason.
 
@@ -174,14 +185,15 @@ backup is listed with its **item count** for the same reason.
 
 **From the command line**, if the app won't start:
 
-With `APPDATA` set in your shell to the same value as in `.env`. Keep the current database aside
-and remove its `-wal`/`-shm` first, or a leftover WAL is replayed on top of the restored file:
+Shown for the default `./data` folder; use your `NETWORTH_DATA` folder instead if you set one.
+Keep the current database aside and remove its `-wal`/`-shm` first, or a leftover WAL is
+replayed on top of the restored file:
 
 ```bash
 docker compose down
-cp -a "$APPDATA/networth/data/networth.db" "$APPDATA/networth/data/networth.db.before-restore"
-rm -f "$APPDATA/networth/data/networth.db-wal" "$APPDATA/networth/data/networth.db-shm"
-cp "$APPDATA/networth/backups/networth-YYYY-MM-DD.db" "$APPDATA/networth/data/networth.db"
+cp -a data/networth.db data/networth.db.before-restore
+rm -f data/networth.db-wal data/networth.db-shm
+cp data/backups/networth-YYYY-MM-DD.db data/networth.db
 docker compose up -d
 ```
 
@@ -389,11 +401,14 @@ before that.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `Set APP_PASSWORD in .env` (compose error) | No `.env`, or it wasn't read | Create `.env` next to `docker-compose.yml`; on a NAS, deploy over SSH |
-| `APP_PASSWORD is still the placeholder` | `.env` not edited | Set a real passphrase |
+| Don't know the passphrase | It was generated on first start | Open `.app_password` in the data folder, or `docker compose exec networth cat /data/.app_password` |
+| Your own passphrase stopped working; log says `generated passphrase … is in use` | `.env` wasn't read (different folder or compose file) | Start it from the project folder that holds `.env` |
+| `APP_PASSWORD is still the placeholder` | Set to a placeholder value | Set a real passphrase, or delete the line to have one generated |
 | Container restarts in a loop | Placeholder password or unwritable data folder | `docker logs networth`: the error names the fix |
 | `data directory is not writable` | `user:` doesn't match the folder owner | See [DEPLOY-NAS.md §2](../DEPLOY-NAS.md) |
 | App is empty after an update | The data volume didn't mount | Don't re-enter data: restore the newest backup with a non-zero item count |
+| Log: `No database found at … so a new, empty one was created` | Normal on a first install. Otherwise the data folder points somewhere new | If you had data, stop the app and point the data folder back at it before entering anything |
+| Log: `/data is NOT a mounted folder` | Started without compose or without a `-v` mount | Data written now is lost when the container goes. Start it with `docker compose up -d` |
 | Prices show "not fetched" | No internet from the host, or a wrong ticker | Check outbound access, then **Refresh all prices & FX** |
 | "Too many attempts" at sign-in | Throttle after 8 failures | Wait the seconds shown; a restart also clears it |
 | Signed out after every restart | Session secret can't be saved | Make the data folder writable, or set `SECRET_KEY` |

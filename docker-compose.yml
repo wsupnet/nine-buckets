@@ -5,12 +5,12 @@ name: networth
 # The only compose file — deploy with:  git pull && docker compose up -d --build
 # On a NAS, point the Docker app's Project at this folder.
 #
-# BEFORE YOU START IT:
-#   1. Create .env next to this file (cp .env.example .env), set APP_PASSWORD and
-#      APPDATA. Compose refuses to start without them, and the app refuses the
-#      placeholder password.
-#   2. user: below — must match the owner of the data folder on the NAS
-#                    (see the `volumes:` section for where that folder lives).
+# No .env is needed to start it. Without one:
+#   - the sign-in passphrase is generated on first start and printed in the log
+#     (docker compose logs); it is kept in data/.app_password
+#   - your data goes in ./data next to this file
+# To choose your own passphrase or data folder, copy .env.example to .env.
+# On Linux/NAS, `user:` below must match the owner of the data folder.
 
 services:
   networth:
@@ -27,8 +27,9 @@ services:
     user: "1000:1000"
 
     environment:
-      # ---- Secrets, read from .env ---------------------------------------
-      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env}
+      # ---- Secrets, read from .env (both optional) -----------------------
+      # Empty = a passphrase is generated once and kept in /data/.app_password.
+      APP_PASSWORD: ${APP_PASSWORD:-}
       # Optional. Empty = a random key is generated and kept in /data/.session_secret.
       SECRET_KEY: ${SECRET_KEY:-}
 
@@ -40,6 +41,11 @@ services:
 
       # ---- Data ----------------------------------------------------------
       DB_PATH: /data/networth.db
+      # Shown in the startup log so you can see which host folder is in use.
+      NETWORTH_DATA: ${NETWORTH_DATA:-./data}
+      # TEMPORARY: lets the app spot a .env still on the old APPDATA layout and
+      # say how to move. Remove once every install uses NETWORTH_DATA.
+      LEGACY_APPDATA: ${APPDATA:-}
       # Set TZ in .env (e.g. TZ=Europe/Berlin); UTC if unset.
       TZ: ${TZ:-UTC}
       # Keep 0. Set to 1 only if you want the sample portfolio to explore.
@@ -54,9 +60,7 @@ services:
       BACKUP_ENABLED: "1"
       BACKUP_INTERVAL_HOURS: "24"
       BACKUP_RETENTION_DAYS: "30"
-      # Backups go OUTSIDE the project folder, so replacing this folder during an
-      # update can't take them with it. See the second volume mount below.
-      BACKUP_DIR: /backups
+      # Backups are written to the backups/ folder inside the data folder.
 
       LOG_LEVEL: INFO
 
@@ -67,25 +71,17 @@ services:
       - "8000:8000"
 
     volumes:
-      # BOTH of these live OUTSIDE the project folder, on purpose, under APPDATA
-      # from .env (NAS: APPDATA=/volume1/docker/appdata; local dev: ./dev-data).
-      # Compose refuses to start if APPDATA is unset rather than guessing a path.
+      # Everything the app keeps (database, session secret, backups/) lives in
+      # this ONE host folder: ./data next to this file, or NETWORTH_DATA from .env.
+      # Not APPDATA: Windows already defines that name for every user.
       #
-      # Create both folders, owned by the `user:` above, BEFORE the first start —
-      # Docker creates missing ones as root and the app then can't write to them.
-      # The app starts on an empty database if the data folder is empty.
-      #
-      # The live database and session secret.
-      - ${APPDATA:?APPDATA is not set}/networth/data:/data
-      # Backups.
-      - ${APPDATA:?APPDATA is not set}/networth/backups:/backups
+      # On a NAS, set NETWORTH_DATA to a folder OUTSIDE this project folder, so a
+      # Docker app that replaces the project folder on update can't delete it.
+      # On Linux/NAS the folder must be owned by the `user:` above; if Docker has
+      # to create it, it's owned by root and the app says how to fix it.
+      - ${NETWORTH_DATA:-./data}:/data
 
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
-      interval: 30s
-      timeout: 5s
-      start_period: 20s
-      retries: 3
+    # Healthcheck is defined once, in the Dockerfile.
 
     mem_limit: 512m
 

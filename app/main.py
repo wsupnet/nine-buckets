@@ -13,7 +13,7 @@ from jinja2.filters import do_round
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, config, importer, jobs, prices
-from .db import (check_writable, connect, db_session, init_db, now_iso,
+from .db import (DB_PATH, check_writable, connect, db_session, init_db, now_iso,
                   seed_demo_data)
 from .model import (
     ASSET_CLASSES,
@@ -53,6 +53,10 @@ log = logging.getLogger("networth")
 # first and the real cause second.
 config.validate()
 check_writable()
+auth.ensure_password()
+
+# Recorded before anything opens the database, which would create the file.
+DB_EXISTED_AT_START = os.path.exists(DB_PATH)
 
 
 def warn_if_data_lost():
@@ -78,6 +82,7 @@ def warn_if_data_lost():
     except Exception:
         return
     if best:
+        # Overrides the "new database" message: this is the more specific diagnosis.
         log.warning(
             "=" * 72 + "\n"
             "  The database is EMPTY, but a backup on disk holds %d item(s).\n"
@@ -90,9 +95,73 @@ def warn_if_data_lost():
         )
 
 
+def in_container():
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+
+
+def report_data_location():
+    """Say plainly, once at startup, which data the app is about to serve.
+
+    A first install, a data folder that didn't get mounted and a mount pointing at
+    the wrong host folder all start up as an empty database. Spell out which case
+    this is, and where the file lives, so the wrong one is caught on day one.
+    """
+    data_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    # Set by docker-compose.yml to the host folder it mounts; empty outside compose.
+    host_dir = os.environ.get("NETWORTH_DATA", "").strip()
+    where = f"{DB_PATH} (host folder: {host_dir})" if host_dir else DB_PATH
+
+    # TEMPORARY, remove with LEGACY_APPDATA in docker-compose.yml. Windows defines
+    # APPDATA for every user (…\AppData\Roaming), so only a value that isn't that
+    # one means a .env written for the old two-folder layout.
+    legacy = os.environ.get("LEGACY_APPDATA", "").strip()
+    if (legacy and "appdata\\roaming" not in legacy.lower().replace("/", "\\")
+            and host_dir in ("", "./data")):
+        log.warning(
+            "=" * 72 + "\n"
+            "  .env still sets APPDATA=%s (the old layout) and not NETWORTH_DATA,\n"
+            "  so this app is using ./data in the project folder, NOT your existing\n"
+            "  data. Stop it, then put this line in .env:\n"
+            "      NETWORTH_DATA=%s/networth/data\n"
+            "  and move %s/networth/backups into that folder.\n"
+            "  Step by step: DEPLOY-NAS.md, 'Upgrading from the APPDATA layout'.\n"
+            + "=" * 72,
+            legacy, legacy.rstrip("/"), legacy.rstrip("/"),
+        )
+
+    if in_container() and not os.path.ismount(data_dir):
+        log.warning(
+            "=" * 72 + "\n"
+            "  %s is NOT a mounted folder. Your data is being written inside the\n"
+            "  container and will be LOST when the container is removed or rebuilt.\n"
+            "  Start it with `docker compose up -d` from the project folder, or mount\n"
+            "  a host folder at %s (docker run -v /some/folder:%s).\n" + "=" * 72,
+            data_dir, data_dir, data_dir,
+        )
+    if not DB_EXISTED_AT_START:
+        log.warning(
+            "No database found at %s, so a new, empty one was created.\n"
+            "  This is normal on a first install. If you already had data, stop the\n"
+            "  app now: it is not looking at the data folder you used before. Check\n"
+            "  NETWORTH_DATA in .env points at the folder that holds your data.",
+            where,
+        )
+        return
+    try:
+        conn = connect()
+        try:
+            items = conn.execute("SELECT COUNT(*) c FROM items").fetchone()["c"]
+        finally:
+            conn.close()
+    except Exception:
+        return
+    log.info("Using the database at %s, %d item(s)", where, items)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    report_data_location()
     if config.SEED_DEMO:
         log.warning("SEED_DEMO is on — inserting demo data into an empty database")
         seed_demo_data()

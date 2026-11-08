@@ -1,0 +1,10 @@
+# Keep LF line endings on every OS. A Windows checkout with core.autocrlf would
+# otherwise turn shell scripts and .env files into CRLF, which breaks them.
+* text=auto eol=lf
+
+*.gif binary
+*.mp4 binary
+*.png binary
+*.jpg binary
+*.db binary
+*.xlsx binary

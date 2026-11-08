@@ -7,7 +7,11 @@ __pycache__/
 .env
 .env.*
 !.env.example
-data/
+# ./data is the default data folder. It is kept in the repo (empty, via
+# .gitkeep) so a clone creates it owned by you rather than Docker creating it
+# as root; everything inside it stays untracked.
+/data/*
+!/data/.gitkeep
 dev-data/
 backups/
 *.db
@@ -19,6 +23,7 @@ backups/
 *.tmp
 *.part
 .session_secret
+.app_password
 .write-probe
 *.log
 *.csv

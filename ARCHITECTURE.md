@@ -185,21 +185,17 @@ Refresh runs **daily in-process** plus on startup. No cron container.
 is an easy way to start the app without its configuration.
 
 ```bash
-cp .env.example .env          # set APP_PASSWORD and APPDATA
-cd /path/to/networth && docker compose up -d --build
+cd /path/to/networth && docker compose up -d --build    # no .env required
 ```
 
-The compose file bind-mounts two host folders under `APPDATA` (from `.env`) that live
-**outside** the repo, so nothing an update does to the code can delete them:
+The compose file bind-mounts **one** host folder at `/data`: `${NETWORTH_DATA:-./data}`. It
+holds the live database, the session secret and `backups/`. `./data` is git-ignored (only its
+`.gitkeep` is tracked, so a clone creates it with the right owner). On the NAS, `NETWORTH_DATA`
+points outside the repo. Don't name the variable `APPDATA`: Windows defines it for every user
+and the shell value beats `.env`.
 
-```
-$APPDATA/networth/data     -> /data      live database + session secret
-$APPDATA/networth/backups  -> /backups   nightly backups
-```
-
-On the NAS `APPDATA=/volume1/docker/appdata`; locally `./dev-data` (git-ignored).
-
-`user:` in the compose file must match the owner of those folders.
+`user:` in the compose file must match the owner of that folder. The image has no `VOLUME`, so
+an unmounted `/data` is detected and logged rather than hidden in an anonymous volume.
 
 ### Operational properties
 
@@ -209,12 +205,14 @@ On the NAS `APPDATA=/volume1/docker/appdata`; locally `./dev-data` (git-ignored)
   15 minutes pass with no failure. A cooldown rather than a lockout, because behind Docker every
   client may share one address. Forwarded headers are not trusted.
 - **Static assets are mtime-stamped** (`app.js?v=…`) so a stale cached JS can't mask a fix
-- **Fails fast with actionable errors**: missing/placeholder `APP_PASSWORD`, unwritable data
+- **Never serves without a login**: an unset `APP_PASSWORD` is generated once and stored in
+  `/data/.app_password` (printed only when created); a short/placeholder one is refused
+- **Fails fast with actionable errors**: placeholder `APP_PASSWORD`, unwritable data
   directory (names the folder's owner, the container's uid, and both fixes)
 
 ### Config
 
-Secrets (`APP_PASSWORD`, optional `SECRET_KEY`) come from `.env`; everything else is inline in
+Optional secrets (`APP_PASSWORD`, `SECRET_KEY`) and the data folder (`NETWORTH_DATA`) come from `.env`, which is itself optional; everything else is inline in
 `docker-compose.yml`:
 
 `AUTH_ENABLED · SESSION_DAYS · SESSION_HTTPS_ONLY · SEED_DEMO · REFRESH_ENABLED ·
@@ -225,7 +223,7 @@ BACKUP_RETENTION_DAYS · BACKUP_DIR`
 
 ## 8. Backups
 
-- `BACKUP_DIR=/backups`, mounted **outside** the project folder
+- Written to `/data/backups`, inside the one data folder (`BACKUP_DIR` overrides it)
 - **Back up now** / **Download** (single self-contained `.db`) / **Restore** / **JSON export**
 - **Restore from file** — upload a `.db` or `.json`; it's integrity-checked and **summarised
   before committing**, then you type `RESTORE`

@@ -46,18 +46,11 @@ class ConfigError(RuntimeError):
 
 def validate():
     """Fail loudly at startup rather than silently serving financial data unprotected."""
-    if AUTH_ENABLED and not APP_PASSWORD:
-        raise ConfigError(
-            "APP_PASSWORD is not set — the environment isn't reaching the container.\n"
-            "  If it worked before and just broke, you almost certainly started it with a\n"
-            "  different compose file or without one. Deploy from the project folder with:\n"
-            "      docker compose up -d --build\n"
-            "  and check APP_PASSWORD is set in the .env file next to docker-compose.yml.\n"
-            "  Confirm what the container actually received with:\n"
-            "      docker inspect networth --format '{{range .Config.Env}}{{println .}}{{end}}'\n"
-            "  To deliberately run with no login (VPN-only access), set AUTH_ENABLED=0."
-        )
-    if AUTH_ENABLED and len(APP_PASSWORD) < 8:
+    # An empty APP_PASSWORD is fine: auth.ensure_password() generates one on first
+    # run and keeps it in the data folder. A password that *was* given is checked.
+    if not AUTH_ENABLED or not APP_PASSWORD:
+        return
+    if len(APP_PASSWORD) < 8:
         raise ConfigError("APP_PASSWORD must be at least 8 characters.")
 
     # A pasted compose file ships with a placeholder. Refuse it, or a deployment
@@ -69,9 +62,9 @@ def validate():
         "password", "passphrase", "your-long-passphrase", "your-passphrase",
         "networth", "letmein", "secret", "admin",
     }
-    if AUTH_ENABLED and placeholder:
+    if placeholder:
         raise ConfigError(
             f"APP_PASSWORD is still the placeholder value ({APP_PASSWORD!r}).\n"
-            "  Replace it with your own passphrase before deploying. Generate one with:\n"
-            "      openssl rand -base64 24"
+            "  Replace it with your own passphrase, or delete the line to have one\n"
+            "  generated on first start (it is printed in the log)."
         )

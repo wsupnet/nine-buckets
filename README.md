@@ -27,7 +27,9 @@ website.
   in each, and see at a glance which buckets are over or under, and roughly how much to buy or
   sell to fix it.
 - **Prices that update themselves.** Stocks, ETFs, crypto and precious metals are valued at
-  today's market price automatically. No more looking them up one at a time.
+  today's market price automatically, on a best-effort basis: prices come from free public
+  sources that can be slow, rate-limited or change without notice, and you can always type a
+  price in yourself.
 - **Any currency.** Keep euros, pounds, yen and more in their own currency; everything is
   converted for the totals.
 - **What you paid, and what you've made.** Record your purchases and sales and the app works out
@@ -39,13 +41,15 @@ website.
 - **Bring your history with you.** Import past trades from your own spreadsheet (checked before
   anything is saved, and undoable), and type in old year-end figures to fill in your chart.
 - **Backups built in.** Automatic daily backups, one-click download, and a safe restore that keeps
-  a copy of your current data first.
+  a copy of your current data first. Automatic backups sit on the same machine as the app, so
+  download one now and then to keep a copy that survives losing that machine.
 
 ## Private by design
 
 - **Runs on your own machine**, such as a home NAS or a spare computer, using Docker.
 - **No bank logins, ever.** You enter balances yourself. The only things the app looks up online
-  are market prices and exchange rates.
+  are market prices and exchange rates. Those price sources (Yahoo Finance, CoinGecko,
+  gold-api.com) see your IP address and which symbols you look up, but never your balances.
 - **Protected by a passphrase**, and meant to be reached on your home network or over a private VPN
   like Tailscale, not from the open internet.
 

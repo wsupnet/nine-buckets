@@ -380,15 +380,18 @@ def check_writable():
     "unable to open database file".
     """
     directory = os.path.dirname(DB_PATH) or "."
+    # The host folder compose mounts here, so the fix names a path that exists.
+    host = os.environ.get("NETWORTH_DATA", "").strip() or "/path/to/your/data/folder"
+    uid = f"{os.getuid()}:{os.getgid()}"
     try:
         os.makedirs(directory, exist_ok=True)
     except OSError as exc:
         raise RuntimeError(
             f"Cannot create the data directory {directory!r}: {exc}\n"
-            f"  The container runs as uid {os.getuid()}:{os.getgid()}.\n"
-            f"  Make the mounted folder writable by that user, e.g. on the NAS:\n"
-            f"      chown -R {os.getuid()}:{os.getgid()} /path/to/networth/data\n"
-            f"  or change `user:` in docker-compose to match the folder's owner."
+            f"  The container runs as uid {uid}.\n"
+            f"  Make the data folder writable by that user, on the host:\n"
+            f"      sudo chown -R {uid} {host}\n"
+            f"  or change `user:` in docker-compose.yml to match the folder's owner."
         ) from exc
 
     probe = os.path.join(directory, ".write-probe")
@@ -407,10 +410,18 @@ def check_writable():
         raise RuntimeError(
             f"The data directory {directory!r} is not writable: {exc}\n"
             f"  It is owned by {owner} (mode {mode}), but this container runs as "
-            f"uid {os.getuid()}:{os.getgid()}.\n"
-            f"  Fix it one of two ways:\n"
-            f"    1. On the NAS:  chown -R {os.getuid()}:{os.getgid()} /path/to/networth/data\n"
-            f"    2. Or set `user: \"{owner}\"` in docker-compose.yml to match the folder."
+            f"uid {uid}.\n"
+            + (
+                # Root-owned: chown only. Running the app as root to match it would
+                # give up the non-root protection.
+                f"  Docker created it as root because it didn't exist yet. Fix it on\n"
+                f"  the host, then start it again:\n"
+                f"      sudo chown -R {uid} {host}"
+                if owner.startswith("0:") else
+                f"  Fix it one of two ways, then start it again:\n"
+                f"    1. On the host:  sudo chown -R {uid} {host}\n"
+                f"    2. Or set `user: \"{owner}\"` in docker-compose.yml to match the folder."
+            )
         ) from exc
 
 

@@ -348,11 +348,11 @@ def backup_database(label=None, skip_if_empty=False):
         except sqlite3.Error:
             items = None
         if items == 0:
-            log.warning(
-                "Skipping the automatic backup: the database has no items in it. "
-                "If you expected data here, the /data volume did not survive the "
-                "last update — restore the newest backup that shows a non-zero "
-                "item count rather than starting over."
+            # Normal on a fresh install; the startup log says which case this is.
+            log.info(
+                "Skipping the automatic backup: the database has no items yet, and an "
+                "empty backup would bury the good ones. If you expected data here, "
+                "see the warnings at the top of the log."
             )
             return {"file": None, "bytes": 0, "pruned": 0, "skipped": "empty database"}
 
@@ -424,7 +424,10 @@ def prune_backups(dest_dir=None):
 async def _run_once(name, fn):
     try:
         result = await asyncio.to_thread(fn)
-        log.info("%s ok: %s", name, result)
+        if isinstance(result, dict) and result.get("skipped"):
+            log.info("%s skipped: %s", name, result["skipped"])
+        else:
+            log.info("%s ok: %s", name, result)
         return result
     except Exception:
         # A failure here must never kill the loop — the next run should still happen.
