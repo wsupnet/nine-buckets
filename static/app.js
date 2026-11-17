@@ -56,6 +56,14 @@
   window.addEventListener("resize", closeAllMenus);
   window.addEventListener("scroll", closeAllMenus, true);
 
+  // Forms that need a "are you sure?": <form data-confirm="question">. The text is
+  // read from the attribute rather than written into an inline handler, so a name
+  // containing a quote can neither break the prompt nor run as script.
+  document.addEventListener("submit", function (e) {
+    var msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
+    if (msg && !window.confirm(msg)) e.preventDefault();
+  });
+
   // Collapsible panels: [data-toggle="id"] shows/hides #id.
   document.addEventListener("click", function (e) {
     var t = e.target.closest("[data-toggle]");

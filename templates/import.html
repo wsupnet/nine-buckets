@@ -245,7 +245,7 @@ into lot ledgers. Nothing is written until you've seen the preview and typed IMP
           <td>
             <div class="row-actions">
               <form method="post" action="/import/batches/{{ b.id }}/rollback"
-                    onsubmit="return confirm('Roll back this import? {{ b.lot_count }} lots will be deleted.')">
+                    data-confirm="Roll back this import? {{ b.lot_count }} lots will be deleted.">
                 <button class="danger tiny" type="submit">Roll back</button>
               </form>
             </div>

@@ -13,6 +13,8 @@ import secrets
 import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from urllib.parse import quote
+
 from starlette.responses import JSONResponse, RedirectResponse
 
 from . import config
@@ -34,6 +36,35 @@ COOLDOWN_SECONDS = 120
 WINDOW_SECONDS = 900
 
 _failures = {}  # ip -> (count, time of last failure)
+
+
+def safe_next(target):
+    """A redirect target that stays inside this app, or "/".
+
+    Anything else is an open redirect: a link to this app's own login page that
+    lands the person on someone else's site. Backslashes and control characters
+    are refused because browsers read "/\\host" the same as "//host".
+    """
+    target = (target or "").strip()
+    if (not target.startswith("/") or target.startswith("//") or "\\" in target
+            or any(ord(ch) < 32 for ch in target)):
+        return "/"
+    return target
+
+
+# Sent on every response. The CSP still allows inline script and style, which the
+# templates use, but stops a page loading or sending anything to another host,
+# being framed, or posting a form elsewhere.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
+    ),
+}
 
 
 def _client_ip(request):
@@ -168,7 +199,9 @@ def session_secret() -> str:
     key = secrets.token_urlsafe(48)
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as fh:
+        # Created owner-only, rather than created readable and tightened after.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
             fh.write(key)
         os.chmod(path, 0o600)
     except OSError as exc:
@@ -184,6 +217,16 @@ def session_secret() -> str:
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        response = await self._gate(request, call_next)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        if request.url.path not in PUBLIC_PATHS \
+                and not request.url.path.startswith(PUBLIC_PREFIXES):
+            # Pages of balances shouldn't sit in a shared browser's or proxy's cache.
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
+    async def _gate(self, request, call_next):
         if not config.AUTH_ENABLED:
             return await call_next(request)
 
@@ -206,4 +249,4 @@ class AuthMiddleware(BaseHTTPMiddleware):
         nxt = request.url.path
         if request.url.query:
             nxt += "?" + request.url.query
-        return RedirectResponse(f"/login?next={nxt}", status_code=303)
+        return RedirectResponse(f"/login?next={quote(nxt, safe='/')}", status_code=303)

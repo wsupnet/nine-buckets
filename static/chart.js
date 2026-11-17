@@ -98,19 +98,27 @@
       controls.appendChild(wrap);
     }
 
+    // Names and labels are typed by the user (or come from an imported file), so
+    // they are escaped before going into the tooltip's HTML.
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (ch) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+      });
+    }
+
     function tipHTML(d) {
       var h = '<div class="nw-tip-head">' + monthLabel(d.month) +
-              (d.label ? ' <span class="nw-tip-note">' + d.label + "</span>" : "") + "</div>";
+              (d.label ? ' <span class="nw-tip-note">' + esc(d.label) + "</span>" : "") + "</div>";
 
       h += '<div class="nw-tip-row nw-tip-total"><span>Assets</span><b>' +
            exact(d.assets) + "</b></div>";
       if (d.assetParts.length) {
         d.assetParts.forEach(function (p) {
-          h += '<div class="nw-tip-row"><span><i style="background:' + p.color +
-               '"></i>' + p.name + "</span><b>" + exact(p.value) + "</b></div>";
+          h += '<div class="nw-tip-row"><span><i style="background:' + esc(p.color) +
+               '"></i>' + esc(p.name) + "</span><b>" + exact(p.value) + "</b></div>";
           p.children.forEach(function (c) {
             h += '<div class="nw-tip-row nw-tip-sub"><span><span class="nw-tip-tree">└─</span>' +
-                 '<i style="background:' + p.color + '"></i>' + c.name +
+                 '<i style="background:' + esc(p.color) + '"></i>' + esc(c.name) +
                  "</span><b>" + exact(c.value) + "</b></div>";
           });
         });
@@ -122,7 +130,7 @@
            exact(d.liabilities) + "</b></div>";
       d.liabParts.forEach(function (p) {
         h += '<div class="nw-tip-row"><span><i style="background:' + LIAB_COLOR +
-             '"></i>' + p.name + "</span><b>" + exact(p.value) + "</b></div>";
+             '"></i>' + esc(p.name) + "</span><b>" + exact(p.value) + "</b></div>";
       });
 
       h += '<div class="nw-tip-row nw-tip-net"><span><i style="background:' + NW_COLOR +

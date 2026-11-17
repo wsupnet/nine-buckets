@@ -216,6 +216,48 @@ def fx_rates(conn):
     return rates
 
 
+BUSINESS_SIDES = ("asset", "liability")
+
+# Items whose value comes from a linked business balance sheet. Their stored
+# amount is not what counts, so money can't be moved in or out of them.
+NOT_SHEET_VALUED = (
+    " AND i.id NOT IN (SELECT item_id FROM business_sheets WHERE linked = 1)"
+)
+
+
+def business_sheets(conn, rates=None):
+    """{item_id: sheet} for every business balance sheet, valued in USD.
+
+    Equity is assets minus liabilities for the whole business; `share_usd` is the
+    part of it that is yours (equity x ownership %), which is what a linked sheet
+    hands to the main sheet.
+    """
+    rates = rates or fx_rates(conn)
+    sheets = {}
+    by_id = {}
+    for r in conn.execute("SELECT * FROM business_sheets"):
+        s = dict(r)
+        s.update(assets=[], liabilities=[], assets_usd=0.0, liabilities_usd=0.0)
+        sheets[r["item_id"]] = s
+        by_id[r["id"]] = s
+    for r in conn.execute("SELECT * FROM business_lines ORDER BY sheet_id, side, id"):
+        s = by_id.get(r["sheet_id"])
+        if s is None:
+            continue
+        line = dict(r)
+        line["value_usd"] = (r["amount"] or 0.0) * rates.get(r["currency"], 1.0)
+        if r["side"] == "liability":
+            s["liabilities"].append(line)
+            s["liabilities_usd"] += line["value_usd"]
+        else:
+            s["assets"].append(line)
+            s["assets_usd"] += line["value_usd"]
+    for s in sheets.values():
+        s["equity_usd"] = s["assets_usd"] - s["liabilities_usd"]
+        s["share_usd"] = s["equity_usd"] * (s["ownership_pct"] or 0.0) / 100.0
+    return sheets
+
+
 def item_value_usd(item, rates, qty=None):
     if item["kind"] == "priced":
         if item["last_price"] is None or qty is None:
@@ -238,6 +280,7 @@ def item_value_usd(item, rates, qty=None):
 def load_items(conn):
     rates = fx_rates(conn)
     summaries = lot_summaries(conn)
+    sheets = business_sheets(conn, rates)
     rows = conn.execute(
         "SELECT i.*, b.name AS bucket_name, b.key AS bucket_key, a.name AS account_name"
         " FROM items i"
@@ -284,6 +327,16 @@ def load_items(conn):
             )
         else:
             d["native_value"] = r["amount"]
+
+        # A business with a linked balance sheet is worth your share of its
+        # equity. The typed amount stays stored underneath, untouched, and is
+        # what the item goes back to if the sheet is unlinked.
+        sheet = sheets.get(r["id"])
+        d["sheet"] = sheet
+        d["sheet_linked"] = bool(sheet and sheet["linked"] and r["kind"] == "manual")
+        if d["sheet_linked"]:
+            d["value_usd"] = sheet["share_usd"]
+            d["native_value"] = sheet["share_usd"] / (rates.get(r["currency"], 1.0) or 1.0)
 
         # Property: equity and payoff progress are derived, never typed.
         d["is_property"] = is_property(r)
@@ -581,6 +634,7 @@ def movable_items(conn):
             " LEFT JOIN accounts a ON a.id = i.account_id"
             " LEFT JOIN buckets b ON b.id = i.bucket_id"
             " WHERE i.kind IN ('cash','manual','liability','property')"
+            + NOT_SHEET_VALUED +
             " ORDER BY a.name IS NULL, a.name, i.name"
         )
     ]

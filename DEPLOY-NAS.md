@@ -292,7 +292,6 @@ sudo docker compose run --rm networth python -m app.reset --yes
 | Container restarts in a loop | Placeholder password, or unwritable data folder | `docker logs networth` — the error names the exact fix |
 | `PermissionError: '/srv/app/main.py'` | Source files copied to the NAS have owner-only permissions, baked into an older image | Rebuild: `docker compose up -d --build`. The Dockerfile now normalises file modes. |
 | `data directory is not writable` | `user:` doesn't match the folder owner | Step 2 |
-| Log: `.env still sets APPDATA=… (the old layout)` | `.env` from before the one-folder layout | [Upgrading from the APPDATA layout](#upgrading-from-the-appdata-layout) |
 | Log: `No database found … new, empty one was created` after the first day | `NETWORTH_DATA` missing or pointing at the wrong folder | Stop the app; set `NETWORTH_DATA` (step 3). Don't enter data into the empty one |
 | `APP_PASSWORD is still the placeholder` | Step 3 not done | Set a real passphrase in `.env`, or delete the line to have one generated |
 | Port 8000 already used | Something else on the NAS has it | Change to `"8001:8000"` in the compose file |

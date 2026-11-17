@@ -43,9 +43,6 @@ services:
       DB_PATH: /data/networth.db
       # Shown in the startup log so you can see which host folder is in use.
       NETWORTH_DATA: ${NETWORTH_DATA:-./data}
-      # TEMPORARY: lets the app spot a .env still on the old APPDATA layout and
-      # say how to move. Remove once every install uses NETWORTH_DATA.
-      LEGACY_APPDATA: ${APPDATA:-}
       # Set TZ in .env (e.g. TZ=Europe/Berlin); UTC if unset.
       TZ: ${TZ:-UTC}
       # Keep 0. Set to 1 only if you want the sample portfolio to explore.

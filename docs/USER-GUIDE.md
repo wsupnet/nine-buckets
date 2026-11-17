@@ -60,6 +60,7 @@ The menu across the top:
 | **Assets & Liabilities** | The full list of everything, grouped by type. Add items, edit balances, move money |
 | **Holdings** | Stocks, crypto and metals: live prices, what you paid, gains and losses, every trade |
 | **Accounts** | The same items grouped by *where* they sit. The easiest page for monthly updates |
+| **Business** | A balance sheet for each business you own: what it owns, what it owes, and your share of the equity |
 | **Allocation** | Your targets, how far off each bucket is, and what to buy or sell to get back on track |
 | **History** | Your net worth over time, monthly snapshots, and backups |
 
@@ -185,6 +186,26 @@ units.
 - **A wrong trade?** Click **Delete** on that row of the holding's ledger. If it was paid from a
   cash account, the money goes back.
 - **A bad import?** Use **Roll back** on the Import page.
+
+### Keep a balance sheet for a business
+
+A business is one row on Assets & Liabilities, but it can have its own balance sheet on the
+**Business** page.
+
+1. Click **+ Add balance sheet**. Pick a business you already recorded (any "Manual value"
+   item), or choose **+ New business…** to create one in the Business bucket.
+2. Enter **your ownership %** (100 if it's all yours).
+3. Decide whether it should **feed the main sheet**:
+   - **Off (reference only):** you keep typing the business's value by hand on Assets &
+     Liabilities. The page shows your typed value next to your share of the equity, so you can
+     see how far apart they are.
+   - **On:** the business counts as *equity × your ownership %*, taken from this sheet. Its
+     value on the other pages becomes read-only and says "from sheet".
+4. Use **+ Add line** for each asset and liability, each in its own currency. Click an amount
+   to update it later, like any other balance.
+
+You can switch the link on or off at any time from the sheet's ⋯ menu. Switching it off keeps
+the last value as the typed amount, so your net worth doesn't jump.
 
 ### Find a holding that disappeared
 

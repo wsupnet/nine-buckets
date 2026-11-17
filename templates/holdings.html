@@ -109,7 +109,7 @@ a holding with lots takes its quantity from the ledger instead of a typed-in num
                 <span class="hint" title="Reverse the move on the Assets &amp; Liabilities page — deleting one side alone would duplicate or lose the units">from a move</span>
               {% else %}
               <form method="post" action="/lots/{{ l.id }}/delete"
-                    onsubmit="return confirm('Delete this {{ l.side }} of {{ l.quantity|num }} on {{ l.trade_date }}?')">
+                    data-confirm="Delete this {{ l.side }} of {{ l.quantity|num }} on {{ l.trade_date }}?">
                 <button class="danger tiny" type="submit">Delete</button>
               </form>
               {% endif %}
@@ -266,7 +266,7 @@ a holding with lots takes its quantity from the ledger instead of a typed-in num
             <div class="row-actions">
               {% if not i.has_lots %}
               <form method="post" action="/items/{{ i.id }}/delete"
-                    onsubmit="return confirm('Delete {{ i.name }}? It has no lots, so no cost basis is lost. Check the remaining holding matches your wallet first.')">
+                    data-confirm="Delete {{ i.name }}? It has no lots, so no cost basis is lost. Check the remaining holding matches your wallet first.">
                 <button class="danger tiny" type="submit">Delete</button>
               </form>
               {% endif %}
@@ -482,7 +482,7 @@ a holding with lots takes its quantity from the ledger instead of a typed-in num
                     </form>
                     <div class="menu-sep"></div>
                     <form method="post" action="/items/{{ i.id }}/delete"
-                          onsubmit="return confirm('Delete {{ i.name }} and its {{ lots[i.id]|length if i.id in lots else 0 }} lots? The realized gain history goes with it.')">
+                          data-confirm="Delete {{ i.name }} and its {{ lots[i.id]|length if i.id in lots else 0 }} lots? The realized gain history goes with it.">
                       <button class="danger" type="submit">Delete</button>
                     </form>
                   </div>
@@ -577,7 +577,7 @@ a holding with lots takes its quantity from the ledger instead of a typed-in num
                 <span class="hint" title="Reverse the move on the Assets &amp; Liabilities page — deleting one side alone would duplicate or lose the units">from a move</span>
               {% else %}
               <form method="post" action="/lots/{{ t.id }}/delete"
-                    onsubmit="return confirm('Delete this {{ t.side }} of {{ t.quantity|num }} {{ t.item_name }} on {{ t.trade_date }}?')">
+                    data-confirm="Delete this {{ t.side }} of {{ t.quantity|num }} {{ t.item_name }} on {{ t.trade_date }}?">
                 <button class="danger tiny" type="submit">Delete</button>
               </form>
               {% endif %}

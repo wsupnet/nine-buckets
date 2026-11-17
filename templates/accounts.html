@@ -58,6 +58,11 @@
                value="{{ i.loan_balance|num }}"></label>
       <span class="hint">{{ i.currency }}</span>
     </div>
+  {% elif i.sheet_linked %}
+    <a class="small" href="/business#sheet-{{ i.sheet.id }}"
+       title="Your share of this business's balance sheet — edit it on the Business page">from sheet</a>
+    <span data-bind="item-native-{{ i.id }}">{{ '{:,.0f}'.format(i.native_value) }}</span>
+    <span class="hint">{{ i.currency }}</span>
   {% else %}
     <input class="inline-edit num" inputmode="decimal"
            data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
@@ -253,7 +258,7 @@
                 <button type="button" onclick="openPanel('acct-{{ a.id }}')">Rename</button>
                 <div class="menu-sep"></div>
                 <form method="post" action="/accounts/{{ a.id }}/delete"
-                      onsubmit="return confirm('Delete {{ a.name }}? Its items are kept and moved to “No account”.')">
+                      data-confirm="Delete {{ a.name }}? Its items are kept and moved to “No account”.">
                   <button class="danger" type="submit">Delete</button>
                 </form>
               </div>

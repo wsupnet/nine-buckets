@@ -213,11 +213,24 @@ def inspect_db(path):
         rates = {r["currency"]: r["usd_per_unit"]
                  for r in con.execute("SELECT * FROM fx_rates")} if "fx_rates" in have else {}
         rates["USD"] = 1.0
+        # item id -> your share of a linked business sheet's equity, in USD.
+        linked = {}
+        if "business_sheets" in have and "business_lines" in have:
+            for s in con.execute("SELECT * FROM business_sheets WHERE linked = 1"):
+                equity = 0.0
+                for ln in con.execute(
+                        "SELECT * FROM business_lines WHERE sheet_id=?", (s["id"],)):
+                    v = (ln["amount"] or 0) * rates.get(ln["currency"], 1.0)
+                    equity += -v if ln["side"] == "liability" else v
+                linked[s["item_id"]] = equity * (s["ownership_pct"] or 0) / 100.0
+
         assets = liabilities = 0.0
         for r in con.execute("SELECT * FROM items"):
             keys = r.keys()
             rate = rates.get(r["currency"], 1.0)
-            if r["kind"] == "priced":
+            if r["kind"] == "manual" and r["id"] in linked:
+                v = linked[r["id"]]
+            elif r["kind"] == "priced":
                 q, p = r["quantity"], r["last_price"]
                 v = (q * p * rates.get(r["price_currency"] or "USD", 1.0)) if q and p else 0.0
             elif r["kind"] == "property" and "loan_balance" in keys:
@@ -261,12 +274,17 @@ def import_json(path):
     con.row_factory = sqlite3.Row      # PRAGMA rows are read by column name below
     try:
         con.executescript(SCHEMA)
+        # Table names come from the uploaded file and go into SQL text below, so
+        # only the names this app's own schema defines are accepted.
+        known = {r["name"] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+            " AND name NOT LIKE 'sqlite_%'")}
         for table, rows in tables.items():
-            if not rows:
-                continue
+            if not rows or table not in known:
+                continue          # empty, or a table this version doesn't have
+            if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+                raise ValueError(f"'{table}' in that JSON isn't a list of rows")
             valid = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
-            if not valid:
-                continue          # a table this version no longer has
             for row in rows:
                 cols = [c for c in row if c in valid]
                 if not cols:
@@ -277,6 +295,12 @@ def import_json(path):
                     [row[c] for c in cols],
                 )
         con.commit()
+    except BaseException:
+        # Don't leave a half-built file behind: its name would list as a backup.
+        con.close()
+        if os.path.exists(staged):
+            os.remove(staged)
+        raise
     finally:
         con.close()
     return staged

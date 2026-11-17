@@ -13,7 +13,8 @@ import sys
 from .db import connect, init_db
 from .jobs import backup_database
 
-TABLES = ["lots", "snapshot_lines", "snapshots", "items", "accounts"]
+TABLES = ["business_lines", "business_sheets", "lots", "snapshot_lines", "snapshots",
+          "items", "accounts"]
 
 
 def counts(conn):

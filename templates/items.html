@@ -312,7 +312,7 @@ Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
             <td>
               <div class="row-actions">
                 <form method="post" action="/transfers/{{ t.id }}/delete"
-                      onsubmit="return confirm('Reverse this transfer? Both balances move back.')">
+                      data-confirm="Reverse this transfer? Both balances move back.">
                   <button class="danger tiny" type="submit">Reverse</button>
                 </form>
               </div>
@@ -353,7 +353,7 @@ Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
             <td>
               <div class="row-actions">
                 <form method="post" action="/holding-transfers/{{ h.id }}/delete"
-                      onsubmit="return confirm('Reverse this move? The units and their basis go back to the source. If you have already sold some of them, the destination will show as oversold.')">
+                      data-confirm="Reverse this move? The units and their basis go back to the source. If you have already sold some of them, the destination will show as oversold.">
                   <button class="danger tiny" type="submit">Reverse</button>
                 </form>
               </div>
@@ -559,10 +559,16 @@ Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
         </td>
       {% else %}
         <td class="num">
+          {% if i.sheet_linked %}
+            <a class="small" href="/business#sheet-{{ i.sheet.id }}"
+               title="Your share of this business's balance sheet — edit it on the Business page">from sheet</a>
+            <span data-bind="item-native-{{ i.id }}">{{ '{:,.0f}'.format(i.native_value) }}</span>
+          {% else %}
           <input class="inline-edit num" inputmode="decimal"
                  data-inline-url="/items/{{ i.id }}/inline" data-inline-field="amount"
                  data-inline-label="Value" aria-label="Value of {{ i.name }}"
                  value="{{ i.amount|num }}">
+          {% endif %}
           <span class="hint">{{ i.currency }}</span>
         </td>
       {% endif %}
@@ -581,7 +587,7 @@ Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
               {% endif %}
               <div class="menu-sep"></div>
               <form method="post" action="/items/{{ i.id }}/delete"
-                    onsubmit="return confirm('Delete {{ i.name }}?')">
+                    data-confirm="Delete {{ i.name }}?">
                 <button class="danger" type="submit">Delete</button>
               </form>
             </div>
@@ -679,7 +685,7 @@ Enter to save. Escape cancels. <a href="/accounts">Grouped by account →</a>
                 <button type="button" onclick="openPanel('edit-{{ i.id }}')">Edit</button>
                 <div class="menu-sep"></div>
                 <form method="post" action="/items/{{ i.id }}/delete"
-                      onsubmit="return confirm('Delete {{ i.name }}?')">
+                      data-confirm="Delete {{ i.name }}?">
                   <button class="danger" type="submit">Delete</button>
                 </form>
               </div>

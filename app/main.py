@@ -17,6 +17,7 @@ from .db import (DB_PATH, check_writable, connect, db_session, init_db, now_iso,
                   seed_demo_data)
 from .model import (
     ASSET_CLASSES,
+    BUSINESS_SIDES,
     KINDS,
     TROY_OZ_PER_UNIT,
     UNIT_LABELS,
@@ -111,24 +112,6 @@ def report_data_location():
     host_dir = os.environ.get("NETWORTH_DATA", "").strip()
     where = f"{DB_PATH} (host folder: {host_dir})" if host_dir else DB_PATH
 
-    # TEMPORARY, remove with LEGACY_APPDATA in docker-compose.yml. Windows defines
-    # APPDATA for every user (…\AppData\Roaming), so only a value that isn't that
-    # one means a .env written for the old two-folder layout.
-    legacy = os.environ.get("LEGACY_APPDATA", "").strip()
-    if (legacy and "appdata\\roaming" not in legacy.lower().replace("/", "\\")
-            and host_dir in ("", "./data")):
-        log.warning(
-            "=" * 72 + "\n"
-            "  .env still sets APPDATA=%s (the old layout) and not NETWORTH_DATA,\n"
-            "  so this app is using ./data in the project folder, NOT your existing\n"
-            "  data. Stop it, then put this line in .env:\n"
-            "      NETWORTH_DATA=%s/networth/data\n"
-            "  and move %s/networth/backups into that folder.\n"
-            "  Step by step: DEPLOY-NAS.md, 'Upgrading from the APPDATA layout'.\n"
-            + "=" * 72,
-            legacy, legacy.rstrip("/"), legacy.rstrip("/"),
-        )
-
     if in_container() and not os.path.ismount(data_dir):
         log.warning(
             "=" * 72 + "\n"
@@ -176,7 +159,9 @@ async def lifespan(app: FastAPI):
         await jobs.stop(tasks)
 
 
-app = FastAPI(title="Nine Buckets", lifespan=lifespan)
+# No interactive API docs: nothing uses them, and they load scripts from a CDN.
+app = FastAPI(title="Nine Buckets", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 
 # Order matters: the session must be decoded before the gate inspects it.
 app.add_middleware(auth.AuthMiddleware)
@@ -324,26 +309,29 @@ def healthz(conn=Depends(db_session)):
     try:
         conn.execute("SELECT 1 FROM buckets LIMIT 1").fetchone()
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+        # Reachable without signing in, so the detail goes to the log only.
+        log.error("healthcheck failed: %s", exc)
+        return JSONResponse({"ok": False}, status_code=503)
     return {"ok": True}
 
 
 @app.get("/login")
 def login_form(request: Request, next: str = "/", error: str = ""):
+    next = auth.safe_next(next)
     if not config.AUTH_ENABLED or request.session.get("auth"):
-        return RedirectResponse(next or "/", 303)
+        return RedirectResponse(next, 303)
+    # `error` is deliberately not rendered from the URL: only this app's own
+    # messages belong on the sign-in page.
     return templates.TemplateResponse(
-        request, "login.html", {"next": next, "error": error}
+        request, "login.html", {"next": next, "error": ""}
     )
 
 
 @app.post("/login")
 async def login(request: Request):
     form = await request.form()
-    nxt = (form.get("next") or "/").strip() or "/"
     # Only ever redirect within this app — an absolute URL here would be an open redirect.
-    if not nxt.startswith("/") or nxt.startswith("//"):
-        nxt = "/"
+    nxt = auth.safe_next(form.get("next"))
 
     ip = auth._client_ip(request)
     wait = auth.is_throttled(ip)
@@ -573,7 +561,7 @@ def create_lot(
         src = conn.execute(
             "SELECT * FROM items WHERE id=? AND kind IN ('cash','manual')", (funding_id,)
         ).fetchone()
-        if not src:
+        if not src or _sheet_valued(conn, funding_id):
             return RedirectResponse("/holdings?err=Unknown+funding+account", 303)
 
         # A buy takes money out; a sell puts the proceeds back in.
@@ -682,6 +670,12 @@ def create_transfer(
     ).fetchone()
     if not src or not dst:
         return RedirectResponse("/items?err=Transfers+need+two+manually-valued+items", 303)
+    for side in (src, dst):
+        if _sheet_valued(conn, side["id"]):
+            return RedirectResponse("/items?err=" + quote_plus(
+                f"{side['name']} is valued from its business balance sheet, so money "
+                f"can't be moved in or out of it here. Change the sheet's lines instead"
+            ), 303)
 
     # An asset loses value when money leaves it; a liability grows when you draw on it.
     from_delta = value if src["kind"] == "liability" else -value
@@ -746,6 +740,13 @@ def delete_transfer(transfer_id: int, conn=Depends(db_session)):
     conn.execute("DELETE FROM transfers WHERE id=?", (transfer_id,))
     conn.commit()
     return RedirectResponse("/items?msg=Transfer+reversed", 303)
+
+
+def _sheet_valued(conn, item_id):
+    """True when the item's value comes from a linked business balance sheet."""
+    return conn.execute(
+        "SELECT 1 FROM business_sheets WHERE item_id=? AND linked=1", (item_id,)
+    ).fetchone() is not None
 
 
 # Quantities are compared with a tolerance so a value that round-tripped through a
@@ -1047,6 +1048,230 @@ def delete_holding_transfer(transfer_id: int, conn=Depends(db_session)):
     return RedirectResponse("/items?msg=" + quote_plus(msg), 303)
 
 
+# ------------------------------------------------------------------------
+# Business balance sheets
+# ------------------------------------------------------------------------
+
+def _biz_err(message):
+    return RedirectResponse("/business?err=" + quote_plus(message), 303)
+
+
+def _pct(raw):
+    """Ownership as 0-100. Blank means the whole business."""
+    value = _float(raw)
+    if value is None:
+        return 100.0
+    if not 0 <= value <= 100:
+        raise ValueError("Ownership must be between 0 and 100%")
+    return value
+
+
+def _freeze_value(conn, sheet):
+    """Before a linked sheet stops feeding the main sheet, write its current value
+    into the item as the typed amount, so net worth doesn't jump at the switch."""
+    item = next((i for i in load_items(conn) if i["id"] == sheet["item_id"]), None)
+    if item and item["sheet_linked"] and item["native_value"] is not None:
+        conn.execute("UPDATE items SET amount=?, updated_at=? WHERE id=?",
+                     (round(item["native_value"], 2), now_iso(), item["id"]))
+
+
+@app.get("/business")
+def business_page(request: Request, conn=Depends(db_session)):
+    items = load_items(conn)
+    business_bucket = conn.execute(
+        "SELECT id FROM buckets WHERE key='business'").fetchone()
+    bucket_id = business_bucket["id"] if business_bucket else None
+    # Offered for a new sheet: manual-value items without one, Business bucket first.
+    candidates = sorted(
+        (i for i in items if i["kind"] == "manual" and not i["sheet"]),
+        key=lambda i: (i["bucket_id"] != bucket_id, i["name"].lower()),
+    )
+    return render(request, "business.html", nav="business",
+                  bv=business_view(items), candidates=candidates)
+
+
+@app.post("/business")
+def create_business_sheet(
+    item_id: str = Form(""),
+    new_name: str = Form(""),
+    currency: str = Form("USD"),
+    ownership_pct: str = Form(""),
+    linked: str = Form(""),
+    conn=Depends(db_session),
+):
+    try:
+        pct_owned = _pct(ownership_pct)
+    except ValueError as exc:
+        return _biz_err(str(exc))
+
+    name = new_name.strip()
+    if item_id.strip() == "new":
+        # A business not on the main sheet yet: record it there too, in the
+        # Business bucket, so the sheet has a row to belong to.
+        if not name:
+            return _biz_err("Give the new business a name")
+        bad = validate_item(conn, name, "manual", currency, "")
+        if bad:
+            return _biz_err(bad)
+        bucket = conn.execute("SELECT id FROM buckets WHERE key='business'").fetchone()
+        iid = conn.execute(
+            "INSERT INTO items (name, kind, bucket_id, currency, updated_at)"
+            " VALUES (?,?,?,?,?)",
+            (name, "manual", bucket["id"] if bucket else None, currency, now_iso()),
+        ).lastrowid
+    else:
+        try:
+            iid = int(item_id)
+        except ValueError:
+            return _biz_err("Choose the business this sheet is for")
+        row = conn.execute("SELECT kind FROM items WHERE id=?", (iid,)).fetchone()
+        if not row or row["kind"] != "manual":
+            return _biz_err("A balance sheet can only be added to a Manual value item")
+        if conn.execute("SELECT 1 FROM business_sheets WHERE item_id=?", (iid,)).fetchone():
+            return _biz_err("That business already has a balance sheet")
+
+    conn.execute(
+        "INSERT INTO business_sheets (item_id, ownership_pct, linked, created_at)"
+        " VALUES (?,?,?,?)", (iid, pct_owned, 1 if linked else 0, now_iso()))
+    conn.commit()
+    return RedirectResponse("/business?msg=" + quote_plus("Balance sheet added"), 303)
+
+
+@app.post("/business/{sheet_id}")
+def update_business_sheet(
+    sheet_id: int,
+    ownership_pct: str = Form(""),
+    linked: str = Form(""),
+    conn=Depends(db_session),
+):
+    sheet = conn.execute("SELECT * FROM business_sheets WHERE id=?", (sheet_id,)).fetchone()
+    if not sheet:
+        return _biz_err("Balance sheet not found")
+    try:
+        pct_owned = _pct(ownership_pct)
+    except ValueError as exc:
+        return _biz_err(str(exc))
+
+    now_linked = 1 if linked else 0
+    if sheet["linked"] and not now_linked:
+        _freeze_value(conn, sheet)
+    conn.execute("UPDATE business_sheets SET ownership_pct=?, linked=? WHERE id=?",
+                 (pct_owned, now_linked, sheet_id))
+    conn.commit()
+    msg = "Saved"
+    if now_linked and not sheet["linked"]:
+        msg = "Saved — the main sheet now takes this business's value from here"
+    elif sheet["linked"] and not now_linked:
+        msg = ("Saved — the sheet is reference only again; the main sheet keeps "
+               "the last value as a typed amount")
+    return RedirectResponse("/business?msg=" + quote_plus(msg), 303)
+
+
+@app.post("/business/{sheet_id}/delete")
+def delete_business_sheet(sheet_id: int, conn=Depends(db_session)):
+    sheet = conn.execute("SELECT * FROM business_sheets WHERE id=?", (sheet_id,)).fetchone()
+    if not sheet:
+        return _biz_err("Balance sheet not found")
+    _freeze_value(conn, sheet)
+    conn.execute("DELETE FROM business_sheets WHERE id=?", (sheet_id,))
+    conn.commit()
+    return RedirectResponse("/business?msg=" + quote_plus(
+        "Balance sheet deleted — the business itself stays on the main sheet"), 303)
+
+
+def _line_fields(conn, side, name, currency):
+    """(error) for a balance sheet line's descriptive fields."""
+    if side not in BUSINESS_SIDES:
+        return "Choose whether the line is an asset or a liability"
+    if not (name or "").strip():
+        return "Give the line a name"
+    known = {r["currency"] for r in conn.execute("SELECT currency FROM fx_rates")}
+    if currency not in known:
+        return (f"There is no exchange rate for '{currency}'. "
+                f"Known currencies: {', '.join(sorted(known))}")
+    return None
+
+
+@app.post("/business/{sheet_id}/lines")
+def create_business_line(
+    sheet_id: int,
+    side: str = Form("asset"),
+    name: str = Form(""),
+    amount: str = Form(""),
+    currency: str = Form("USD"),
+    conn=Depends(db_session),
+):
+    if not conn.execute("SELECT 1 FROM business_sheets WHERE id=?", (sheet_id,)).fetchone():
+        return _biz_err("Balance sheet not found")
+    bad = _line_fields(conn, side, name, currency)
+    if bad:
+        return _biz_err(bad)
+    try:
+        value = _float(amount)
+    except ValueError as exc:
+        return _biz_err(str(exc))
+    conn.execute(
+        "INSERT INTO business_lines (sheet_id, side, name, amount, currency, updated_at)"
+        " VALUES (?,?,?,?,?,?)",
+        (sheet_id, side, name.strip(), value, currency, now_iso()))
+    conn.commit()
+    return RedirectResponse(
+        f"/business?msg={quote_plus('Added ' + name.strip())}#sheet-{sheet_id}", 303)
+
+
+@app.post("/business/lines/{line_id}")
+def update_business_line(
+    line_id: int,
+    side: str = Form("asset"),
+    name: str = Form(""),
+    currency: str = Form("USD"),
+    conn=Depends(db_session),
+):
+    line = conn.execute("SELECT * FROM business_lines WHERE id=?", (line_id,)).fetchone()
+    if not line:
+        return _biz_err("Line not found")
+    bad = _line_fields(conn, side, name, currency)
+    if bad:
+        return _biz_err(bad)
+    conn.execute(
+        "UPDATE business_lines SET side=?, name=?, currency=?, updated_at=? WHERE id=?",
+        (side, name.strip(), currency, now_iso(), line_id))
+    conn.commit()
+    return RedirectResponse(
+        f"/business?msg={quote_plus('Saved ' + name.strip())}#sheet-{line['sheet_id']}", 303)
+
+
+@app.post("/business/lines/{line_id}/inline")
+async def inline_business_line(line_id: int, request: Request, conn=Depends(db_session)):
+    form = await request.form()
+    if (form.get("field") or "") != "amount":
+        return JSONResponse({"ok": False, "error": "Only the amount is editable here"}, 400)
+    value = (form.get("value") or "").strip()
+    try:
+        parsed = _float(value)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": f"'{value}' is not a number"}, 400)
+    line = conn.execute("SELECT * FROM business_lines WHERE id=?", (line_id,)).fetchone()
+    if not line:
+        return JSONResponse({"ok": False, "error": "Line not found"}, 404)
+    conn.execute("UPDATE business_lines SET amount=?, updated_at=? WHERE id=?",
+                 (parsed, now_iso(), line_id))
+    conn.commit()
+    return JSONResponse({"ok": True, "prev": num(line["amount"]),
+                         "patch": patch_payload(conn)})
+
+
+@app.post("/business/lines/{line_id}/delete")
+def delete_business_line(line_id: int, conn=Depends(db_session)):
+    line = conn.execute("SELECT * FROM business_lines WHERE id=?", (line_id,)).fetchone()
+    if not line:
+        return _biz_err("Line not found")
+    conn.execute("DELETE FROM business_lines WHERE id=?", (line_id,))
+    conn.commit()
+    return RedirectResponse(
+        f"/business?msg={quote_plus('Deleted ' + line['name'])}#sheet-{line['sheet_id']}", 303)
+
+
 @app.get("/accounts")
 def accounts_page(request: Request, conn=Depends(db_session)):
     av = accounts_view(conn)
@@ -1319,6 +1544,15 @@ def update_item(
             ), 303,
         )
 
+    if prev["kind"] == "manual" and kind != "manual" and conn.execute(
+            "SELECT 1 FROM business_sheets WHERE item_id=?", (item_id,)).fetchone():
+        return RedirectResponse(
+            "/items?err=" + quote_plus(
+                f"{prev['name']} has a business balance sheet, which only a Manual "
+                f"value item can carry. Delete the sheet on the Business page first"
+            ), 303,
+        )
+
     new_ticker = ticker.strip().upper() or None
     conn.execute(
         "UPDATE items SET name=?, kind=?, bucket_id=?, account_id=?, currency=?, amount=?,"
@@ -1409,6 +1643,57 @@ def patch_payload(conn):
                 f"{money(sp['value_usd'])} ({sp['pct']:.0f}%)")
     for bid, v in av["col_totals"].items():
         out[f"accounts-col-{bid}"] = money(v)
+    out.update(business_patch(p["items"]))
+    return out
+
+
+def business_view(items):
+    """The Business page: one entry per balance sheet, biggest first."""
+    out = []
+    for i in items:
+        s = i.get("sheet")
+        if not s:
+            continue
+        out.append({
+            **s,
+            "item": i,
+            "linked": i["sheet_linked"],
+            # What the main sheet counts for this business right now, and how far
+            # a hand-entered figure sits from your share of book equity.
+            "main_usd": i["value_usd"],
+            "gap_usd": None if i["sheet_linked"] or i["value_usd"] is None
+            else i["value_usd"] - s["share_usd"],
+        })
+    out.sort(key=lambda b: (-(b["share_usd"] or 0.0), b["item"]["name"].lower()))
+    return {
+        "sheets": out,
+        "equity_usd": sum(b["equity_usd"] for b in out),
+        "share_usd": sum(b["share_usd"] for b in out),
+        "linked_usd": sum(b["share_usd"] for b in out if b["linked"]),
+    }
+
+
+def _signed_money(v):
+    return "—" if v is None else ("+" if v > 0 else "") + money(v)
+
+
+def business_patch(items):
+    bv = business_view(items)
+    out = {
+        "biz-total-equity": money(bv["equity_usd"]),
+        "biz-total-share": money(bv["share_usd"]),
+        "biz-total-linked": money(bv["linked_usd"]),
+    }
+    for b in bv["sheets"]:
+        k = f"biz-{b['id']}"
+        out[f"{k}-assets"] = money(b["assets_usd"])
+        out[f"{k}-liabilities"] = money(b["liabilities_usd"])
+        out[f"{k}-equity"] = money(b["equity_usd"])
+        out[f"{k}-share"] = money(b["share_usd"])
+        out[f"{k}-main"] = money(b["main_usd"])
+        out[f"{k}-gap"] = _signed_money(b["gap_usd"])
+        for line in b["assets"] + b["liabilities"]:
+            out[f"bizline-{line['id']}-usd"] = money(line["value_usd"])
     return out
 
 
@@ -1435,8 +1720,11 @@ async def inline_item(item_id: int, request: Request, conn=Depends(db_session)):
                 {"ok": False,
                  "error": "Liabilities aren't bucketed — they reduce net worth only"}, 400)
         prev = str(row["bucket_id"] or "")
+        bucket, bad = resolve_bucket(conn, value)
+        if bad:
+            return JSONResponse({"ok": False, "error": bad}, 400)
         conn.execute("UPDATE items SET bucket_id=?, updated_at=? WHERE id=?",
-                     (int(value) if value else None, now_iso(), item_id))
+                     (bucket, now_iso(), item_id))
     else:
         if row["kind"] == "priced" and field == "quantity":
             has_lots = conn.execute(
@@ -1448,6 +1736,11 @@ async def inline_item(item_id: int, request: Request, conn=Depends(db_session)):
                      "error": "Quantity comes from this holding's lots — edit the ledger instead"},
                     400,
                 )
+        if field == "amount" and _sheet_valued(conn, item_id):
+            return JSONResponse(
+                {"ok": False,
+                 "error": "Value comes from this business's balance sheet — edit it "
+                          "on the Business page"}, 400)
         try:
             parsed = _float(value)
         except ValueError:
@@ -1563,7 +1856,8 @@ def refresh_price(item_id: int):
             (price, ccy, now_iso(), item_id),
         )
         conn.commit()
-        return RedirectResponse(f"/items?msg={row['ticker']}+updated", 303)
+        return RedirectResponse(
+            "/items?msg=" + quote_plus(f"{row['ticker']} updated"), 303)
     finally:
         conn.close()
 
@@ -1753,13 +2047,36 @@ def export_json(conn=Depends(db_session)):
             " AND name NOT LIKE 'sqlite_%' ORDER BY name"
         )
     ]
-    data = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t}")] for t in tables}
+    # Quoted: after restoring an uploaded file, table names are whatever it held.
+    data = {
+        t: [dict(r) for r in conn.execute(
+            'SELECT * FROM "{}"'.format(t.replace('"', '""')))]
+        for t in tables
+    }
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return JSONResponse(
         {"exported_at": now_iso(), "tables": data},
         headers={"Content-Disposition":
                  f'attachment; filename="networth-export-{stamp}.json"'},
     )
+
+
+# Uploads are written to the data folder before they are checked, so an unbounded
+# one could fill the disk. Both limits are far above any real file.
+MAX_BACKUP_UPLOAD = 100 * 1024 * 1024
+MAX_SHEET_UPLOAD = 25 * 1024 * 1024
+
+
+async def _save_upload(file, dest, limit):
+    """Stream an upload to `dest`, refusing it once it passes `limit` bytes."""
+    written = 0
+    with open(dest, "wb") as fh:
+        while chunk := await file.read(1024 * 1024):
+            written += len(chunk)
+            if written > limit:
+                raise ValueError(
+                    f"the file is larger than {limit // (1024 * 1024)} MB")
+            fh.write(chunk)
 
 
 @app.post("/backups/upload")
@@ -1774,9 +2091,7 @@ async def upload_backup(file: UploadFile = File(...)):
     staged = os.path.join(jobs.backup_dir(), f"{jobs.BACKUP_PREFIX}{jobs.UPLOAD_NAME}.db")
     tmp = staged + (".json" if raw.endswith(".json") else ".part")
     try:
-        with open(tmp, "wb") as fh:
-            while chunk := await file.read(1024 * 1024):
-                fh.write(chunk)
+        await _save_upload(file, tmp, MAX_BACKUP_UPLOAD)
 
         if raw.endswith(".json"):
             built = jobs.import_json(tmp)
@@ -1942,9 +2257,7 @@ async def import_upload(file: UploadFile = File(...)):
     path = importer.staged_path(jobs.backup_dir())
     tmp = path + ".part"
     try:
-        with open(tmp, "wb") as fh:
-            while chunk := await file.read(1024 * 1024):
-                fh.write(chunk)
+        await _save_upload(file, tmp, MAX_SHEET_UPLOAD)
         os.replace(tmp, path)
         importer.read_workbook(path, undated_fallback=UNDATED_DEFAULT)
     except Exception as exc:

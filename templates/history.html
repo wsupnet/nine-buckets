@@ -108,7 +108,7 @@
                 <button type="button" onclick="openPanel('snap-{{ s.id }}')">Edit</button>
                 <div class="menu-sep"></div>
                 <form method="post" action="/snapshots/{{ s.id }}/delete"
-                      onsubmit="return confirm('Delete the snapshot from {{ s.date_only }}?')">
+                      data-confirm="Delete the snapshot from {{ s.date_only }}?">
                   <button class="danger" type="submit">Delete</button>
                 </form>
               </div>
@@ -253,7 +253,7 @@
                           onclick="openPanel('restore-{{ loop.index }}')">Restore</button>
                   <div class="menu-sep"></div>
                   <form method="post" action="/backups/delete"
-                        onsubmit="return confirm('Delete {{ b.name }}?\n\nThis removes the backup file itself and cannot be undone. {% if backups|length == 1 %}It is your ONLY backup — you would have none left.{% else %}You would have {{ backups|length - 1 }} left.{% endif %}')">
+                        data-confirm="Delete {{ b.name }}?&#10;&#10;This removes the backup file itself and cannot be undone. {% if backups|length == 1 %}It is your ONLY backup — you would have none left.{% else %}You would have {{ backups|length - 1 }} left.{% endif %}">
                     <input type="hidden" name="name" value="{{ b.name }}">
                     <button class="danger" type="submit">Delete</button>
                   </form>

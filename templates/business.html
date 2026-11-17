@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block title %}Business{% endblock %}
+{% block content %}
+
+<div class="card-head" style="margin-bottom:6px">
+  <div>
+    <h1>Business</h1>
+    <p class="sub" style="margin:4px 0 0">Each business is its own entity with its own balance
+    sheet: what it owns, what it owes, and the equity left over. On the main sheet a business is
+    still one row — you choose per business whether that row takes its value from here.</p>
+  </div>
+  <button type="button" class="ghost" data-toggle="addsheet" aria-expanded="false"
+          data-label-open="Close" data-label-closed="+ Add balance sheet">+ Add balance sheet</button>
+</div>
+
+<div class="card" id="addsheet" hidden style="margin-top:16px">
+  <form method="post" action="/business" class="grid g3" style="align-items:end">
+    <div class="field" style="margin:0">
+      <label>Business</label>
+      <select name="item_id" id="sheet-item" required>
+        {% for i in candidates %}
+          <option value="{{ i.id }}">{{ i.name }}{% if i.bucket_name %} · {{ i.bucket_name }}{% endif %}</option>
+        {% endfor %}
+        <option value="new">+ New business…</option>
+      </select>
+    </div>
+    <div class="field new-biz" style="margin:0" hidden>
+      <label>New business name</label>
+      <input name="new_name" placeholder="e.g. Example LLC">
+    </div>
+    <div class="field new-biz" style="margin:0" hidden>
+      <label>Currency</label>
+      <select name="currency">
+        {% for c in currencies %}<option>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Your ownership %</label>
+      <input name="ownership_pct" inputmode="decimal" value="100">
+    </div>
+    <div class="field" style="margin:0">
+      <label><input type="checkbox" name="linked" value="1" style="width:auto">
+        Feed the main sheet</label>
+      <span class="hint">Off = reference only; you keep typing the value by hand.</span>
+    </div>
+    <div><button type="submit">Add balance sheet</button></div>
+  </form>
+  <p class="small muted" style="margin-bottom:0">Pick a business already on Assets &amp;
+  Liabilities (any “Manual value” item), or add a new one — it is created in the Business
+  bucket with this sheet attached.</p>
+</div>
+
+<div class="stats" style="margin-top:18px">
+  <div class="stat">
+    <div class="label">Balance sheets</div>
+    <div class="value">{{ bv.sheets|length }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Book equity, all</div>
+    <div class="value" data-bind="biz-total-equity">{{ bv.equity_usd|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Your share</div>
+    <div class="value" data-bind="biz-total-share">{{ bv.share_usd|money }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Feeding net worth</div>
+    <div class="value" data-bind="biz-total-linked">{{ bv.linked_usd|money }}</div>
+  </div>
+</div>
+
+{% macro line_table(b, side, rows, total_key, total) %}
+<div class="section-title">{{ 'Assets' if side == 'asset' else 'Liabilities' }}</div>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Line</th><th class="num">Amount</th><th class="num">USD</th><th></th></tr></thead>
+  <tbody>
+  {% for l in rows %}
+    <tr>
+      <td>{{ l.name }}</td>
+      <td class="num">
+        <input class="inline-edit num" inputmode="decimal"
+               data-inline-url="/business/lines/{{ l.id }}/inline" data-inline-field="amount"
+               data-inline-label="{{ l.name }}" aria-label="Amount of {{ l.name }}"
+               value="{{ l.amount|num }}">
+        <span class="hint">{{ l.currency }}</span>
+      </td>
+      <td class="num" data-bind="bizline-{{ l.id }}-usd">{{ l.value_usd|money }}</td>
+      <td>
+        <div class="row-actions">
+          <div class="menu">
+            <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                    aria-label="Actions for {{ l.name }}">⋯</button>
+            <div class="menu-list" hidden>
+              <button type="button" onclick="openPanel('line-{{ l.id }}')">Edit</button>
+              <div class="menu-sep"></div>
+              <form method="post" action="/business/lines/{{ l.id }}/delete"
+                    data-confirm="Delete this line?">
+                <button class="danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No {{ 'assets' if side == 'asset' else 'liabilities' }} yet.</td></tr>
+  {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr>
+      <td colspan="2"><b>Total {{ 'assets' if side == 'asset' else 'liabilities' }}</b></td>
+      <td class="num"><b data-bind="{{ total_key }}">{{ total|money }}</b></td><td></td>
+    </tr>
+  </tfoot>
+</table>
+</div>
+
+{% for l in rows %}
+<div class="edit-panel" id="line-{{ l.id }}" hidden>
+  <div class="section-title" style="margin-top:0">Edit “{{ l.name }}”</div>
+  <form method="post" action="/business/lines/{{ l.id }}" class="grid g3" style="align-items:end">
+    <div class="field" style="margin:0">
+      <label>Name</label>
+      <input name="name" value="{{ l.name }}" required>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Side</label>
+      <select name="side">
+        <option value="asset" {{ 'selected' if l.side == 'asset' }}>Asset</option>
+        <option value="liability" {{ 'selected' if l.side == 'liability' }}>Liability</option>
+      </select>
+    </div>
+    <div class="field" style="margin:0">
+      <label>Currency</label>
+      <select name="currency">
+        {% for c in currencies %}<option {{ 'selected' if c == l.currency }}>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <div style="display:flex; gap:8px">
+      <button type="submit">Save</button>
+      <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+    </div>
+  </form>
+</div>
+{% endfor %}
+{% endmacro %}
+
+{% for b in bv.sheets %}
+<div class="card" id="sheet-{{ b.id }}" style="margin-top:18px">
+  <div class="card-head">
+    <div>
+      <h2>{{ b.item.name }}</h2>
+      <p class="sub" style="margin:4px 0 0">
+        You own {{ b.ownership_pct|num }}% ·
+        {% if b.linked %}<span class="tag latest">feeds the main sheet</span>
+        {% else %}<span class="tag none">reference only</span>{% endif %}
+        {% if b.item.bucket_name %}· {{ b.item.bucket_name }} bucket{% endif %}
+      </p>
+    </div>
+    <div class="row-actions">
+      <button type="button" class="ghost tiny" data-toggle="addline-{{ b.id }}" aria-expanded="false"
+              data-label-open="Close" data-label-closed="+ Add line">+ Add line</button>
+      <div class="menu">
+        <button class="menu-btn" type="button" aria-haspopup="true" aria-expanded="false"
+                aria-label="Actions for {{ b.item.name }}">⋯</button>
+        <div class="menu-list" hidden>
+          <button type="button" onclick="openPanel('sheet-edit-{{ b.id }}')">Ownership &amp; link</button>
+          <div class="menu-sep"></div>
+          <form method="post" action="/business/{{ b.id }}/delete"
+                data-confirm="Delete this balance sheet and all its lines? The business itself stays on the main sheet.">
+            <button class="danger" type="submit">Delete sheet</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats" style="margin:16px 0 0">
+    <div class="stat">
+      <div class="label">Assets</div>
+      <div class="value pos" data-bind="biz-{{ b.id }}-assets">{{ b.assets_usd|money }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Liabilities</div>
+      <div class="value neg" data-bind="biz-{{ b.id }}-liabilities">{{ b.liabilities_usd|money }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Equity</div>
+      <div class="value" data-bind="biz-{{ b.id }}-equity">{{ b.equity_usd|money }}</div>
+      <div class="small muted" style="margin-top:4px">your share ({{ b.ownership_pct|num }}%):
+        <span data-bind="biz-{{ b.id }}-share">{{ b.share_usd|money }}</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">On the main sheet</div>
+      <div class="value" data-bind="biz-{{ b.id }}-main">{{ b.main_usd|money }}</div>
+      <div class="small muted" style="margin-top:4px">
+        {% if b.linked %}taken from this sheet
+        {% else %}typed by hand ·
+          <span data-bind="biz-{{ b.id }}-gap">{{ ('+' if b.gap_usd and b.gap_usd > 0 else '') ~ (b.gap_usd|money) }}</span>
+          vs your share
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div id="addline-{{ b.id }}" hidden style="margin-top:16px">
+    <form method="post" action="/business/{{ b.id }}/lines" class="grid g3" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>Side</label>
+        <select name="side">
+          <option value="asset">Asset</option>
+          <option value="liability">Liability</option>
+        </select>
+      </div>
+      <div class="field" style="margin:0">
+        <label>Line name</label>
+        <input name="name" required placeholder="e.g. Operating account">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Amount</label>
+        <input name="amount" inputmode="decimal">
+      </div>
+      <div class="field" style="margin:0">
+        <label>Currency</label>
+        <select name="currency">
+          {% for c in currencies %}<option {{ 'selected' if c == b.item.currency }}>{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><button type="submit">Add line</button></div>
+    </form>
+  </div>
+
+  <div class="edit-panel" id="sheet-edit-{{ b.id }}" hidden>
+    <div class="section-title" style="margin-top:0">Ownership &amp; link for “{{ b.item.name }}”</div>
+    <form method="post" action="/business/{{ b.id }}" class="grid g3" style="align-items:end">
+      <div class="field" style="margin:0">
+        <label>Your ownership %</label>
+        <input name="ownership_pct" inputmode="decimal" value="{{ b.ownership_pct|num }}">
+      </div>
+      <div class="field" style="margin:0">
+        <label><input type="checkbox" name="linked" value="1" style="width:auto"
+                      {{ 'checked' if b.linked }}> Feed the main sheet</label>
+        <span class="hint">On: this business counts as your share of the equity here. Off: the
+        typed value on Assets &amp; Liabilities counts, and this sheet is reference only.</span>
+      </div>
+      <div style="display:flex; gap:8px">
+        <button type="submit">Save</button>
+        <button class="ghost" type="button" onclick="closePanels()">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  {{ line_table(b, 'asset', b.assets, 'biz-' ~ b.id ~ '-assets', b.assets_usd) }}
+  {{ line_table(b, 'liability', b.liabilities, 'biz-' ~ b.id ~ '-liabilities', b.liabilities_usd) }}
+</div>
+{% else %}
+<div class="card" style="margin-top:18px">
+  <p class="muted" style="margin:0">No balance sheets yet. Use “+ Add balance sheet” to give a
+  business its own assets and liabilities.</p>
+</div>
+{% endfor %}
+
+<p class="small muted">Amounts save as you leave the field, like balances elsewhere. Equity is
+assets minus liabilities for the whole business; your share is equity × your ownership %.
+Deleting a business on Assets &amp; Liabilities deletes its sheet with it.</p>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // The name and currency fields only matter for a business that isn't on the
+  // main sheet yet.
+  var pick = document.getElementById('sheet-item');
+  function sync() {
+    var isNew = pick.value === 'new';
+    document.querySelectorAll('.new-biz').forEach(function (el) { el.hidden = !isNew; });
+  }
+  if (pick) { pick.addEventListener('change', sync); sync(); }
+})();
+</script>
+{% endblock %}

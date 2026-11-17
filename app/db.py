@@ -150,6 +150,30 @@ CREATE TABLE IF NOT EXISTS snapshot_items (
 
 CREATE INDEX IF NOT EXISTS idx_snapitems ON snapshot_items(snapshot_id);
 
+-- A business's own balance sheet. It hangs off the item that records the business
+-- on the main sheet, so the business is still one row there. `linked` decides
+-- whether that row's value is derived from this sheet (equity x ownership) or
+-- stays hand-entered with the sheet as reference only.
+CREATE TABLE IF NOT EXISTS business_sheets (
+    id            INTEGER PRIMARY KEY,
+    item_id       INTEGER NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
+    ownership_pct REAL NOT NULL DEFAULT 100,
+    linked        INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS business_lines (
+    id         INTEGER PRIMARY KEY,
+    sheet_id   INTEGER NOT NULL REFERENCES business_sheets(id) ON DELETE CASCADE,
+    side       TEXT NOT NULL DEFAULT 'asset',
+    name       TEXT NOT NULL,
+    amount     REAL,
+    currency   TEXT NOT NULL DEFAULT 'USD',
+    updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_business_lines ON business_lines(sheet_id, side, id);
+
 CREATE TABLE IF NOT EXISTS coin_ids (
     ticker  TEXT PRIMARY KEY,
     coin_id TEXT NOT NULL
@@ -519,5 +543,24 @@ def seed_demo_data():
             (name, kind, buckets.get(bkey), account_id, ccy, amount, ticker, aclass, qty,
              unit, loan_original, loan_balance, now_iso()),
         )
+
+    # A reference-only balance sheet for the example business, so the Business
+    # page has something on it. Not linked: the typed value above still counts.
+    llc = conn.execute(
+        "SELECT id FROM items WHERE name = 'Example LLC equity'").fetchone()["id"]
+    sheet = conn.execute(
+        "INSERT INTO business_sheets (item_id, ownership_pct, linked, created_at)"
+        " VALUES (?,?,?,?)", (llc, 60, 0, now_iso())).lastrowid
+    for side, name, amount, ccy in [
+        ("asset", "Operating account", 38214.77, "USD"),
+        ("asset", "Receivables", 12480.00, "USD"),
+        ("asset", "Equipment", 21350.00, "USD"),
+        ("liability", "Business credit line", 6120.45, "USD"),
+        ("liability", "Taxes payable", 2890.00, "USD"),
+    ]:
+        conn.execute(
+            "INSERT INTO business_lines (sheet_id, side, name, amount, currency,"
+            " updated_at) VALUES (?,?,?,?,?,?)",
+            (sheet, side, name, amount, ccy, now_iso()))
     conn.commit()
     conn.close()

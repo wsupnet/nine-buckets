@@ -7,6 +7,8 @@ PriceError with a message suitable for showing in the UI.
 import logging
 import time
 
+from urllib.parse import quote
+
 import httpx
 
 from .db import connect, now_iso
@@ -114,7 +116,7 @@ def fetch_metal_spot(code: str):
 
     try:
         with httpx.Client(timeout=10.0, headers=HEADERS, follow_redirects=True) as c:
-            r = _get(c, GOLD_API.format(symbol=metal))
+            r = _get(c, GOLD_API.format(symbol=quote(metal, safe="")))
             r.raise_for_status()
             data = r.json()
         price = float(data.get("price") or 0) or None
@@ -160,7 +162,7 @@ def _get(client, url, **kw):
 def fetch_yahoo(symbol: str):
     try:
         with httpx.Client(timeout=10.0, headers=HEADERS, follow_redirects=True) as c:
-            r = _get(c, YAHOO_CHART.format(symbol=symbol))
+            r = _get(c, YAHOO_CHART.format(symbol=quote(symbol, safe="=^.-")))
             if r.status_code == 404:
                 raise PriceError(f"Yahoo has no symbol '{symbol}' — check the ticker")
             r.raise_for_status()

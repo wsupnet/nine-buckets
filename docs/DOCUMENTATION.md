@@ -1,7 +1,7 @@
 # Nine Buckets — Technical documentation
 
 [← README](../README.md) · [User guide](USER-GUIDE.md) · [Architecture](../ARCHITECTURE.md) ·
-[NAS deployment](../DEPLOY-NAS.md) · [Demo video tooling](../scripts/demo/README.md)
+[NAS deployment](../DEPLOY-NAS.md)
 
 The reference for running, configuring and understanding the app: installation, every setting,
 how values are calculated, how data is stored and backed up, and what to do when something goes
@@ -142,6 +142,14 @@ The published port is the `ports:` mapping in `docker-compose.yml`, not a variab
   overrides it with `user: "1000:1000"`, a common owner of NAS shared folders. Set `user:` to
   whoever owns the data and backup folders (see [DEPLOY-NAS.md](../DEPLOY-NAS.md)).
   `"0:0"` (root) sidesteps permission problems but gives up the non-root protection.
+- **Browser protections on every response:** `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, and a
+  Content-Security-Policy that stops a page loading from or sending to any other host. Pages
+  behind the login are sent `Cache-Control: no-store`. FastAPI's `/docs` pages are switched off.
+- **Uploads are capped:** 100 MB for a backup to restore, 25 MB for a spreadsheet to import.
+- **Signing out clears this browser only.** Sessions are signed cookies with no server-side
+  list, so a copied cookie stays valid until it expires. To sign every browser out, delete
+  `.session_secret` in the data folder (or change `SECRET_KEY`) and restart.
 - **Treat the network as the main control.** Keep it on your LAN or behind a VPN, and set
   `SESSION_HTTPS_ONLY=1` if you put HTTPS in front of it.
 
@@ -216,6 +224,19 @@ same net worth by construction.
 
 Accounts are a managed table, not free text, so a typo can't fork one account into two. Deleting
 an account never deletes its items; they move to "No account".
+
+### Business balance sheets
+
+A "Manual value" item can carry a balance sheet (`business_sheets`, one per item) made of
+hand-entered asset and liability lines (`business_lines`), each with its own currency.
+Equity = assets − liabilities; your share = equity × `ownership_pct`.
+
+The sheet's `linked` flag decides what the main sheet counts. Off, the item's typed amount
+counts and the sheet is reference only. On, the item is valued at your share of the equity,
+computed at read time from current FX rates; the typed amount stays stored underneath and is
+ignored. A linked item can't be edited inline, used in Move money or used to fund a lot.
+Unlinking or deleting the sheet first writes the current value into the typed amount.
+Deleting the item deletes its sheet. Snapshots, the JSON export and backups include both.
 
 ### Item kinds
 

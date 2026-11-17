@@ -79,7 +79,6 @@ browser.
 | [Install on a NAS](DEPLOY-NAS.md) | Whoever runs the app | Step by step NAS setup, data folders outside the repo, safe updates with `git pull`, NAS troubleshooting |
 | [Architecture](ARCHITECTURE.md) | Developers | The code's structure and the design decisions that shouldn't be reversed |
 | [Demo video](docs/demo/networth-demo.mp4) | Everyone | A 2-minute walkthrough of the main features, with made-up data |
-| [How the demo video is made](scripts/demo/README.md) | Developers | The Docker-based recording pipeline, with fictional data |
 | [`.env.example`](.env.example) · [`deploy.local.env.example`](deploy.local.env.example) | Whoever runs the app | Templates for your private settings |
 
 ## Inspiration

@@ -51,7 +51,7 @@ app/config.py    env config + validation
 app/reset.py     data wipe CLI
 ```
 
-Templates: `dashboard · items · holdings · accounts · allocation · history · import · base · login`
+Templates: `dashboard · items · holdings · accounts · business · allocation · history · import · base · login`
 Static: `app.js` (menus/panels) · `inline.js` (click-to-edit) · `chart.js` (net worth chart) ·
 `tables.js` (sorting, filtering and pagination — one module, because all three decide
 which rows are visible and split apart they fight over it) · `style.css`
@@ -70,7 +70,11 @@ worth **by construction**, not by agreement between separate calculations.
 ### Tables
 
 `buckets · accounts · items · lots · transfers · holding_transfers · import_batches · fx_rates ·
-snapshots · snapshot_lines · snapshot_items · coin_ids`
+snapshots · snapshot_lines · snapshot_items · business_sheets · business_lines · coin_ids`
+
+`business_sheets` hangs a balance sheet off one manual item; `business_lines` are its asset and
+liability lines. A sheet with `linked = 1` overrides the item's value in `model.load_items`
+(equity × ownership %), so every view and snapshot picks it up without its own code path.
 
 `transfers` moves money between manually-valued items; `holding_transfers` moves *units* of a
 priced holding between two locations. `lots.transfer_id` links the pair of lots a holding move
